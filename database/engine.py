@@ -24,9 +24,7 @@ async def get_session() -> AsyncSession:
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Добавляем колонку sub_link, если её нет
         try:
             await conn.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS sub_link VARCHAR(255)"))
-            await conn.commit()
         except Exception:
             pass
