@@ -3,9 +3,8 @@ from datetime import date, timedelta
 
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from aiogram.types import ReplyKeyboardRemove
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 
 from config import config
 from database.engine import async_session
@@ -21,8 +20,6 @@ router = Router()
 def is_admin(user_id: int) -> bool:
     return user_id in config.ADMIN_IDS
 
-
-# === Вход в админку ===
 
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
@@ -43,7 +40,17 @@ async def exit_admin(message: types.Message):
     await message.answer("Выход из админки.", reply_markup=main_keyboard())
 
 
-# === Подтверждение платежа ===
+@router.message(Command("cleanup"))
+async def cleanup_subscriptions(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+    async with async_session() as session:
+        await session.execute(
+            text("UPDATE subscriptions SET status = 'expired' WHERE status = 'active' AND expires_at < CURRENT_DATE")
+        )
+        await session.commit()
+    await message.answer("Истекшие подписки очищены.")
+
 
 @router.message(Command("confirm"))
 async def confirm_payment(message: types.Message):
@@ -68,13 +75,11 @@ async def confirm_payment(message: types.Message):
         payment.amount = amount
         payment.confirmed_at = date.today()
 
-        # Ищем клиента
         client = await session.get(Client, payment.client_id)
         if not client:
             await message.answer("Клиент не найден.")
             return
 
-        # Определяем тариф по сумме
         tariff_key = "1month"
         for key, t in config.TARIFFS.items():
             if t["price"] == amount:
@@ -83,52 +88,32 @@ async def confirm_payment(message: types.Message):
 
         tariff = config.TARIFFS.get(tariff_key, config.TARIFFS["1month"])
 
-        # Создаём или продлеваем подписку
-        active_sub = await session.execute(
-            select(Subscription)
-            .where(Subscription.client_id == client.id)
+        # Ищем свободную ссылку
+        used_links = await session.execute(
+            select(Subscription.sub_link)
             .where(Subscription.status == "active")
-            .order_by(Subscription.expires_at.desc())
-            .limit(1)
+            .where(Subscription.expires_at >= date.today())
         )
-        sub = active_sub.scalar_one_or_none()
+        used = set(row[0] for row in used_links if row[0])
+        free_links = [link for link in config.SUB_LINKS if link not in used]
+        sub_link = free_links[0] if free_links else None
 
-        if sub and sub.expires_at >= date.today():
-            # Продлеваем
-            sub.expires_at = sub.expires_at + timedelta(days=tariff["days"])
-            sub.plan = tariff_key
-        else:
-            # Новая подписка
-            if sub:
-                sub.status = "cancelled"
+        sub = Subscription(
+            client_id=client.id,
+            started_at=date.today(),
+            expires_at=date.today() + timedelta(days=tariff["days"]),
+            plan=tariff_key,
+            sub_link=sub_link,
+        )
+        session.add(sub)
 
-            new_uuid = Subscription.generate_uuid()
-            xray_result = await xray.add_client(
-                email=f"client_{client.id}",
-                uuid=new_uuid
-            )
-
-            sub = Subscription(
-                client_id=client.id,
-                started_at=date.today(),
-                expires_at=date.today() + timedelta(days=tariff["days"]),
-                plan=tariff_key,
-                xray_uuid=new_uuid,
-            )
-            session.add(sub)
-
-        # Логируем
         event = EventLog(
             client_id=client.id,
             event_type="payment_confirmed",
-            description=f"Платёж {amount}₽ подтверждён, подписка до {sub.expires_at}"
+            description=f"Платёж {amount} руб. подтверждён, подписка до {sub.expires_at}"
         )
         session.add(event)
         await session.commit()
-
-    # Уведомляем клиента
-    host = config.XUI_HOST.split("://")[1].split(":")[0] if "://" in config.XUI_HOST else config.XUI_HOST
-    vless_link = f"vless://{sub.xray_uuid}@{host}:443?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision#Pandora"
 
     try:
         await message.bot.send_message(
@@ -136,16 +121,14 @@ async def confirm_payment(message: types.Message):
             f"<b>Оплата подтверждена!</b>\n\n"
             f"Тариф: {tariff['name']}\n"
             f"Подписка до: {sub.expires_at.strftime('%d.%m.%Y')}\n\n"
-            "<b>Ваш ключ:</b>\n"
-            f"<code>{vless_link}</code>\n\n"
+            f"<b>Ваша ссылка:</b>\n"
+            f"<code>{sub_link or 'не назначена'}</code>\n\n"
             f"Поддержка: @{config.SUPPORT_BOT_USERNAME}"
         )
         await message.answer(f"Платёж #{payment_id} подтверждён. Клиент уведомлён.")
     except Exception as e:
         await message.answer(f"Платёж подтверждён, но клиента уведомить не удалось: {e}")
 
-
-# === Отклонение платежа ===
 
 @router.message(Command("reject"))
 async def reject_payment(message: types.Message):
@@ -170,8 +153,6 @@ async def reject_payment(message: types.Message):
 
     await message.answer(f"Платёж #{payment_id} отклонён.")
 
-
-# === Список клиентов ===
 
 @router.message(F.text == "👥 Клиенты")
 async def list_clients(message: types.Message):
@@ -213,8 +194,6 @@ async def get_active_sub(client_id: int):
         return result.scalar_one_or_none()
 
 
-# === Статистика ===
-
 @router.message(F.text == "📊 Статистика")
 async def show_stats(message: types.Message):
     if not is_admin(message.from_user.id):
@@ -241,42 +220,37 @@ async def show_stats(message: types.Message):
         "<b>📊 Статистика</b>\n\n"
         f"<b>Всего клиентов:</b> {total_clients or 0}\n"
         f"<b>Активных подписок:</b> {active_subs or 0}\n"
-        f"<b>Выручка за всё время:</b> {total_payments or 0}₽\n"
-        f"<b>Выручка за месяц:</b> {month_payments or 0}₽"
+        f"<b>Выручка за всё время:</b> {total_payments or 0} руб.\n"
+        f"<b>Выручка за месяц:</b> {month_payments or 0} руб."
     )
 
-
-# === Статус сервера ===
 
 @router.message(F.text == "🖥 Сервер")
 async def server_status(message: types.Message):
     if not is_admin(message.from_user.id):
         return
 
-    # Проверяем доступность 3x-ui
     try:
-        logged_in = await xray.login()
-        if logged_in:
+        data = await xray._api_get("/panel/api/inbounds/list")
+        if data and data.get("success"):
             await message.answer(
                 "<b>🖥 Статус сервера</b>\n\n"
-                "3x-ui: <b>онлайн</b> ✅\n"
+                "3x-ui: <b>онлайн</b>\n"
                 f"Адрес: {config.XUI_HOST}"
             )
         else:
             await message.answer(
                 "<b>🖥 Статус сервера</b>\n\n"
-                "3x-ui: <b>ошибка подключения</b> ❌\n"
+                "3x-ui: <b>ошибка подключения</b>\n"
                 f"Адрес: {config.XUI_HOST}"
             )
     except Exception as e:
         await message.answer(
             "<b>🖥 Статус сервера</b>\n\n"
-            f"3x-ui: <b>ошибка</b> ❌\n"
+            f"3x-ui: <b>ошибка</b>\n"
             f"{e}"
         )
 
-
-# === Рассылка ===
 
 @router.message(F.text == "📢 Рассылка")
 async def broadcast_start(message: types.Message):
