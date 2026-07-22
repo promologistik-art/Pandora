@@ -39,10 +39,11 @@ class Subscription(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     started_at = Column(Date, nullable=False, default=date.today)
     expires_at = Column(Date, nullable=False)
-    status = Column(String(20), default="active")  # active, expired, cancelled
+    status = Column(String(20), default="active")
     plan = Column(String(20), default="1month")
     is_trial = Column(Boolean, default=False)
     xray_uuid = Column(String(64), default=generate_uuid)
+    sub_link = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="subscriptions")
@@ -55,7 +56,7 @@ class Payment(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     amount = Column(DECIMAL(10, 2), nullable=False)
     method = Column(String(20), default="sbp")
-    status = Column(String(20), default="pending")  # pending, confirmed, rejected
+    status = Column(String(20), default="pending")
     phone_last4 = Column(String(4))
     confirmed_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)

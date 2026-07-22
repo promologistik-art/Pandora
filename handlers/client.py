@@ -8,8 +8,7 @@ from sqlalchemy import select
 
 from config import config
 from database.engine import async_session
-from database.models import Client, Subscription, Payment, EventLog, generate_uuid
-from services.xray_api import xray
+from database.models import Client, Subscription, Payment, EventLog
 from keyboards.client_kb import (
     main_keyboard, tariff_keyboard, payment_keyboard,
     status_keyboard, help_keyboard, downloads_keyboard,
@@ -61,14 +60,6 @@ async def get_active_subscription(client_id: int) -> Subscription | None:
             .limit(1)
         )
         return result.scalar_one_or_none()
-
-
-def build_vless_link(uuid: str, host: str, auth: str = "") -> str:
-    base = f"vless://{uuid}@{host}:47725?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision"
-    if auth:
-        base += f"&password={auth}"
-    base += "#Pandora"
-    return base
 
 
 async def add_referral_bonus(referrer: Client, session):
@@ -154,29 +145,35 @@ async def trial_start(message: types.Message):
         result = await session.execute(
             select(Subscription)
             .where(Subscription.client_id == client.id)
-            .where(Subscription.is_trial == True)
+            .where(Subscription.status == "active")
+            .where(Subscription.expires_at >= date.today())
         )
         if result.scalar_one_or_none():
             await message.answer(
-                "Вы уже использовали триал-доступ.\n"
-                "Выберите тариф для продолжения:",
-                reply_markup=tariff_keyboard()
+                "У вас уже есть активная подписка.\n"
+                "Проверьте статус: кнопка «📊 Статус»",
+                reply_markup=main_keyboard()
             )
             return
 
-    trial_uuid = generate_uuid()
+        used_links = await session.execute(
+            select(Subscription.sub_link)
+            .where(Subscription.status == "active")
+            .where(Subscription.expires_at >= date.today())
+        )
+        used = set(row[0] for row in used_links if row[0])
 
-    result = await xray.add_client(
-        email=f"trial_{client.id}",
-        uuid=trial_uuid
-    )
+    free_links = [link for link in config.SUB_LINKS if link not in used]
 
-    if result is None:
+    if not free_links:
         await message.answer(
-            "Произошла ошибка при создании ключа. Попробуйте позже или свяжитесь с поддержкой.",
-            reply_markup=payment_keyboard()
+            "К сожалению, все пробные места сейчас заняты.\n"
+            "Попробуйте позже или свяжитесь с поддержкой.",
+            reply_markup=main_keyboard()
         )
         return
+
+    sub_link = free_links[0]
 
     async with async_session() as session:
         sub = Subscription(
@@ -185,32 +182,28 @@ async def trial_start(message: types.Message):
             expires_at=date.today() + timedelta(days=config.TRIAL_DAYS),
             plan="trial",
             is_trial=True,
-            xray_uuid=trial_uuid,
+            sub_link=sub_link,
         )
         session.add(sub)
 
         event = EventLog(
             client_id=client.id,
             event_type="trial_activated",
-            description=f"Триал на {config.TRIAL_DAYS} дн."
+            description=f"Триал на {config.TRIAL_DAYS} дн., ссылка {sub_link}"
         )
         session.add(event)
         await session.commit()
 
-    host = "dashoguz.mooo.com"
-    auth = result.get("auth", "")
-    vless_link = build_vless_link(trial_uuid, host, auth)
-
     await message.answer(
         f"<b>Триал-доступ активирован на {config.TRIAL_DAYS} дня!</b>\n\n"
-        f"<b>Ваш ключ:</b>\n"
-        f"<code>{vless_link}</code>\n\n"
+        f"<b>Ваша ссылка:</b>\n"
+        f"<code>{sub_link}</code>\n\n"
         "<b>Как подключиться:</b>\n"
         "1. Скачайте приложение Happ (кнопка «🆘 Помощь / FAQ»)\n"
-        "2. В приложении добавьте конфигурацию:\n"
+        "2. В приложении добавьте подписку:\n"
         "   Тип: Подписка\n"
         "   Имя: любое (например, Ящик Пандоры)\n"
-        "   URL: скопируйте ключ выше и вставьте\n"
+        "   URL: скопируйте ссылку выше и вставьте\n"
         "3. Готово!\n\n"
         f"<b>Поддержка:</b> @{config.SUPPORT_BOT_USERNAME}",
         reply_markup=status_keyboard()
@@ -236,10 +229,8 @@ async def cmd_status(message: types.Message):
         return
 
     days_left = (sub.expires_at - date.today()).days
-    host = "dashoguz.mooo.com"
-    vless_link = build_vless_link(sub.xray_uuid, host)
-
     trial_text = " (триал)" if sub.is_trial else ""
+    link = sub.sub_link or "не указана"
 
     await message.answer(
         "<b>📊 Статус подписки</b>\n\n"
@@ -247,14 +238,14 @@ async def cmd_status(message: types.Message):
         f"<b>Тариф:</b> {config.TARIFFS.get(sub.plan, {}).get('name', sub.plan)}\n"
         f"<b>Действует до:</b> {sub.expires_at.strftime('%d.%m.%Y')}\n"
         f"<b>Осталось дней:</b> {days_left}\n\n"
-        "<b>Ваш ключ:</b>\n"
-        f"<code>{vless_link}</code>\n\n"
+        "<b>Ваша ссылка:</b>\n"
+        f"<code>{link}</code>\n\n"
         "<b>Как подключиться:</b>\n"
         "1. Скачайте приложение Happ (кнопка «🆘 Помощь / FAQ»)\n"
-        "2. В приложении добавьте конфигурацию:\n"
+        "2. В приложении добавьте подписку:\n"
         "   Тип: Подписка\n"
         "   Имя: любое (например, Ящик Пандоры)\n"
-        "   URL: скопируйте ключ выше и вставьте\n"
+        "   URL: скопируйте ссылку выше и вставьте\n"
         "3. Готово!\n\n"
         f"<b>Поддержка:</b> @{config.SUPPORT_BOT_USERNAME}",
         reply_markup=status_keyboard()
@@ -321,11 +312,11 @@ async def send_instructions(callback: types.CallbackQuery):
     await callback.message.answer(
         "<b>📖 Инструкция по установке:</b>\n\n"
         "1. Скачайте приложение Happ для вашей платформы\n"
-        "2. Скопируйте ключ из раздела «📊 Статус»\n"
-        "3. В приложении добавьте конфигурацию:\n"
+        "2. Скопируйте ссылку из раздела «📊 Статус»\n"
+        "3. В приложении добавьте подписку:\n"
         "   Тип: Подписка\n"
         "   Имя: любое\n"
-        "   URL: вставьте скопированный ключ\n"
+        "   URL: вставьте скопированную ссылку\n"
         "4. Подключитесь\n\n"
         f"Подробные инструкции: @{config.SUPPORT_BOT_USERNAME}"
     )
