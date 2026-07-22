@@ -1,3 +1,40 @@
+Техническая и рыночная оценка бизнеса на роутерах
+Link reading is unavailable in Expert Mode. Please use Instant Mode.
+python
+@router.callback_query(F.data.startswith("download:"))
+async def send_download_link(callback: types.CallbackQuery):
+    """Отправляет ссылку на скачивание."""
+    platform = callback.data.split(":")[1]
+
+    links = {
+        "windows": "https://www.happ.su/main/ru",
+        "macos": "https://www.happ.su/main/ru",
+        "android": "https://play.google.com/store/apps/details?id=com.happproxy",
+        "ios": "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215",
+        "androidtv": "https://play.google.com/store/apps/details?id=com.happproxy",
+    }
+
+    platform_names = {
+        "windows": "Windows",
+        "macos": "macOS",
+        "android": "Android",
+        "ios": "iOS",
+        "androidtv": "Android TV",
+    }
+
+    name = platform_names.get(platform, platform)
+    text = links.get(platform, "https://www.happ.su/main/ru")
+
+    await callback.message.answer(
+        f"<b>Скачать для {name}:</b>\n"
+        f"{text}\n\n"
+        f"Все версии: https://www.happ.su/main/ru"
+    )
+    await callback.answer()
+Замените функцию send_download_link в handlers/client.py. Ссылки обновлены, добавлена ссылка на общую страницу для всех платформ.
+
+handlers/client.py полный
+python
 import logging
 from datetime import date, timedelta, datetime
 
@@ -302,15 +339,29 @@ async def send_download_link(callback: types.CallbackQuery):
     platform = callback.data.split(":")[1]
 
     links = {
-        "windows": "https://github.com/XTLS/Xray-core/releases (Windows)",
-        "macos": "https://apps.apple.com/app/streisand/id... (macOS)",
-        "android": "https://play.google.com/store/apps/details?id=com.v2ray.ang (Android)",
-        "ios": "https://apps.apple.com/app/streisand/id... (iOS)",
-        "androidtv": "https://play.google.com/store/apps/details?id=com.v2ray.ang (Android TV)",
+        "windows": "https://www.happ.su/main/ru",
+        "macos": "https://www.happ.su/main/ru",
+        "android": "https://play.google.com/store/apps/details?id=com.happproxy",
+        "ios": "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215",
+        "androidtv": "https://play.google.com/store/apps/details?id=com.happproxy",
     }
 
-    text = links.get(platform, "Ссылка появится позже")
-    await callback.message.answer(f"<b>Скачать для {platform}:</b>\n{text}")
+    platform_names = {
+        "windows": "Windows",
+        "macos": "macOS",
+        "android": "Android",
+        "ios": "iOS",
+        "androidtv": "Android TV",
+    }
+
+    name = platform_names.get(platform, platform)
+    text = links.get(platform, "https://www.happ.su/main/ru")
+
+    await callback.message.answer(
+        f"<b>Скачать для {name}:</b>\n"
+        f"{text}\n\n"
+        f"Все версии: https://www.happ.su/main/ru"
+    )
     await callback.answer()
 
 
@@ -404,7 +455,6 @@ async def payment_phone_digits(message: types.Message):
         message.from_user.first_name
     )
 
-    # Создаём запись о платеже
     async with async_session() as session:
         payment = Payment(
             client_id=client.id,
@@ -415,7 +465,6 @@ async def payment_phone_digits(message: types.Message):
         session.add(payment)
         await session.commit()
 
-        # Уведомление админам
         for admin_id in config.ADMIN_IDS:
             try:
                 await message.bot.send_message(
@@ -471,3 +520,4 @@ async def payment_screenshot(message: types.Message):
         "Скриншот получен. Ожидайте подтверждения.\n"
         f"По вопросам: @{config.SUPPORT_BOT_USERNAME}"
     )
+This response is AI-generated, for reference only.
