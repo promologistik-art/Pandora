@@ -1,40 +1,3 @@
-Техническая и рыночная оценка бизнеса на роутерах
-Link reading is unavailable in Expert Mode. Please use Instant Mode.
-python
-@router.callback_query(F.data.startswith("download:"))
-async def send_download_link(callback: types.CallbackQuery):
-    """Отправляет ссылку на скачивание."""
-    platform = callback.data.split(":")[1]
-
-    links = {
-        "windows": "https://www.happ.su/main/ru",
-        "macos": "https://www.happ.su/main/ru",
-        "android": "https://play.google.com/store/apps/details?id=com.happproxy",
-        "ios": "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215",
-        "androidtv": "https://play.google.com/store/apps/details?id=com.happproxy",
-    }
-
-    platform_names = {
-        "windows": "Windows",
-        "macos": "macOS",
-        "android": "Android",
-        "ios": "iOS",
-        "androidtv": "Android TV",
-    }
-
-    name = platform_names.get(platform, platform)
-    text = links.get(platform, "https://www.happ.su/main/ru")
-
-    await callback.message.answer(
-        f"<b>Скачать для {name}:</b>\n"
-        f"{text}\n\n"
-        f"Все версии: https://www.happ.su/main/ru"
-    )
-    await callback.answer()
-Замените функцию send_download_link в handlers/client.py. Ссылки обновлены, добавлена ссылка на общую страницу для всех платформ.
-
-handlers/client.py полный
-python
 import logging
 from datetime import date, timedelta, datetime
 
@@ -57,10 +20,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-# === Вспомогательные функции ===
-
 async def get_or_create_client(telegram_id: int, username: str, first_name: str) -> Client:
-    """Возвращает существующего клиента или создаёт нового."""
     async with async_session() as session:
         result = await session.execute(
             select(Client).where(Client.telegram_id == telegram_id)
@@ -91,7 +51,6 @@ async def get_or_create_client(telegram_id: int, username: str, first_name: str)
 
 
 async def get_active_subscription(client_id: int) -> Subscription | None:
-    """Возвращает активную подписку клиента."""
     async with async_session() as session:
         result = await session.execute(
             select(Subscription)
@@ -105,12 +64,10 @@ async def get_active_subscription(client_id: int) -> Subscription | None:
 
 
 def build_vless_link(uuid: str, host: str) -> str:
-    """Собирает ссылку VLESS для клиента."""
     return f"vless://{uuid}@{host}:443?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision#Pandora"
 
 
 async def add_referral_bonus(referrer: Client, session):
-    """Начисляет бонусные дни рефереру."""
     active_sub = await session.execute(
         select(Subscription)
         .where(Subscription.client_id == referrer.id)
@@ -132,18 +89,14 @@ async def add_referral_bonus(referrer: Client, session):
     await session.commit()
 
 
-# === Команда /start ===
-
 @router.message(CommandStart())
 async def cmd_start(message: types.Message):
-    """Приветствие и главное меню."""
     client = await get_or_create_client(
         message.from_user.id,
         message.from_user.username,
         message.from_user.first_name
     )
 
-    # Уведомление админам о новом клиенте
     if client.created_at and (datetime.utcnow() - client.created_at).seconds < 10:
         for admin_id in config.ADMIN_IDS:
             try:
@@ -157,7 +110,6 @@ async def cmd_start(message: types.Message):
             except Exception as e:
                 logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
 
-    # Проверяем реферальную ссылку
     ref_arg = None
     args = message.text.split()
     if len(args) > 1 and args[1].startswith("ref"):
@@ -168,7 +120,6 @@ async def cmd_start(message: types.Message):
         except ValueError:
             pass
 
-    # Обрабатываем реферала
     if ref_arg and client.referrer_id is None:
         async with async_session() as session:
             referrer = await session.get(Client, ref_arg)
@@ -176,7 +127,6 @@ async def cmd_start(message: types.Message):
                 client.referrer_id = ref_arg
                 client.source = "referral"
                 await session.commit()
-
                 await add_referral_bonus(referrer, session)
 
     welcome = (
@@ -188,18 +138,14 @@ async def cmd_start(message: types.Message):
     await message.answer(welcome, reply_markup=main_keyboard())
 
 
-# === Кнопка "💳 Попробовать 3 дня бесплатно" ===
-
 @router.message(F.text == "💳 Попробовать 3 дня бесплатно")
 async def trial_start(message: types.Message):
-    """Активация триала."""
     client = await get_or_create_client(
         message.from_user.id,
         message.from_user.username,
         message.from_user.first_name
     )
 
-    # Проверяем, был ли уже триал
     async with async_session() as session:
         result = await session.execute(
             select(Subscription)
@@ -214,10 +160,8 @@ async def trial_start(message: types.Message):
             )
             return
 
-    # Создаём триал-подписку
     trial_uuid = generate_uuid()
 
-    # Добавляем клиента в 3x-ui
     result = await xray.add_client(
         email=f"trial_{client.id}",
         uuid=trial_uuid
@@ -265,11 +209,8 @@ async def trial_start(message: types.Message):
     )
 
 
-# === Кнопка "📊 Статус" ===
-
 @router.message(F.text == "📊 Статус")
 async def cmd_status(message: types.Message):
-    """Проверка статуса подписки."""
     client = await get_or_create_client(
         message.from_user.id,
         message.from_user.username,
@@ -305,11 +246,8 @@ async def cmd_status(message: types.Message):
     )
 
 
-# === Кнопка "🆘 Помощь / FAQ" ===
-
 @router.message(F.text == "🆘 Помощь / FAQ")
 async def cmd_help(message: types.Message):
-    """Помощь и FAQ."""
     await message.answer(
         "<b>🆘 Помощь и FAQ</b>\n\n"
         "<b>Частые вопросы:</b>\n"
@@ -324,7 +262,6 @@ async def cmd_help(message: types.Message):
 
 @router.callback_query(F.data == "help:downloads")
 async def show_downloads(callback: types.CallbackQuery):
-    """Ссылки на скачивание."""
     await callback.message.edit_text(
         "<b>📥 Скачать приложения:</b>\n\n"
         "Выберите платформу:",
@@ -335,7 +272,6 @@ async def show_downloads(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("download:"))
 async def send_download_link(callback: types.CallbackQuery):
-    """Отправляет ссылку на скачивание."""
     platform = callback.data.split(":")[1]
 
     links = {
@@ -367,7 +303,6 @@ async def send_download_link(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "help:instructions")
 async def send_instructions(callback: types.CallbackQuery):
-    """Отправляет инструкцию."""
     await callback.message.answer(
         "<b>📖 Инструкция по установке:</b>\n\n"
         "1. Скачайте приложение для вашей платформы\n"
@@ -379,11 +314,8 @@ async def send_instructions(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# === Кнопка "🎁 Пригласить друга" ===
-
 @router.message(F.text == "🎁 Пригласить друга")
 async def invite_friend(message: types.Message):
-    """Реферальная программа."""
     client = await get_or_create_client(
         message.from_user.id,
         message.from_user.username,
@@ -398,11 +330,8 @@ async def invite_friend(message: types.Message):
     )
 
 
-# === Обработка тарифов ===
-
 @router.callback_query(F.data.startswith("tariff:"))
 async def tariff_selected(callback: types.CallbackQuery):
-    """Пользователь выбрал тариф."""
     tariff_key = callback.data.split(":")[1]
     tariff = config.TARIFFS.get(tariff_key)
 
@@ -426,7 +355,6 @@ async def tariff_selected(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "menu:tariffs")
 async def show_tariffs(callback: types.CallbackQuery):
-    """Показывает тарифы из меню."""
     await callback.message.edit_text(
         "<b>Выберите тариф:</b>",
         reply_markup=tariff_keyboard()
@@ -434,11 +362,8 @@ async def show_tariffs(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# === Обработка оплаты ===
-
 @router.callback_query(F.data == "payment:confirm")
 async def payment_confirm(callback: types.CallbackQuery):
-    """Клиент нажал «Я оплатил»."""
     await callback.message.answer(
         "Пришлите скриншот оплаты или последние 4 цифры номера, с которого перевели.\n"
         "Администратор проверит платёж и активирует подписку."
@@ -448,7 +373,6 @@ async def payment_confirm(callback: types.CallbackQuery):
 
 @router.message(F.text, F.text.regexp(r"^\d{4}$"))
 async def payment_phone_digits(message: types.Message):
-    """Клиент прислал 4 цифры."""
     client = await get_or_create_client(
         message.from_user.id,
         message.from_user.username,
@@ -485,7 +409,6 @@ async def payment_phone_digits(message: types.Message):
 
 @router.message(F.photo)
 async def payment_screenshot(message: types.Message):
-    """Клиент прислал скриншот."""
     client = await get_or_create_client(
         message.from_user.id,
         message.from_user.username,
@@ -520,4 +443,3 @@ async def payment_screenshot(message: types.Message):
         "Скриншот получен. Ожидайте подтверждения.\n"
         f"По вопросам: @{config.SUPPORT_BOT_USERNAME}"
     )
-This response is AI-generated, for reference only.
