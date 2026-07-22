@@ -31,6 +31,11 @@ class Config:
     SUPPORT_BOT_USERNAME: str = os.getenv("SUPPORT_BOT_USERNAME", "silverzen_bot")
     VK_PAGE: str = os.getenv("VK_PAGE", "https://vk.ru/pyxispandorae")
 
+    # === Пул ссылок подписки ===
+    SUB_LINKS: list[str] = field(default_factory=lambda: [
+        x.strip() for x in os.getenv("SUB_LINKS", "").split(",") if x.strip()
+    ])
+
     # === Тарифы ===
     TRIAL_DAYS: int = 3
 
