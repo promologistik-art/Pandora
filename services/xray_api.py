@@ -77,9 +77,28 @@ class XRayAPI:
         })
         settings["clients"] = clients
 
+        update_data = {
+            "id": config.XUI_INBOUND_ID,
+            "protocol": inbound.get("protocol", "vless"),
+            "port": inbound.get("port", 47725),
+            "listen": inbound.get("listen", ""),
+            "remark": inbound.get("remark", ""),
+            "enable": inbound.get("enable", True),
+            "expiryTime": inbound.get("expiryTime", 0),
+            "total": inbound.get("total", 0),
+            "trafficReset": inbound.get("trafficReset", "never"),
+            "settings": settings,
+            "streamSettings": inbound.get("streamSettings", {}),
+            "sniffing": inbound.get("sniffing", {"enabled": False}),
+            "tag": inbound.get("tag", ""),
+            "shareAddrStrategy": inbound.get("shareAddrStrategy", "listen"),
+            "shareAddr": inbound.get("shareAddr", ""),
+            "subSortIndex": inbound.get("subSortIndex", 1),
+        }
+
         result = await self._api_post(
             f"/panel/api/inbounds/update/{config.XUI_INBOUND_ID}",
-            {"id": config.XUI_INBOUND_ID, "settings": settings}
+            update_data
         )
 
         if result and result.get("success"):
@@ -108,9 +127,29 @@ class XRayAPI:
             return False
 
         settings["clients"] = new_clients
+
+        update_data = {
+            "id": config.XUI_INBOUND_ID,
+            "protocol": inbound.get("protocol", "vless"),
+            "port": inbound.get("port", 47725),
+            "listen": inbound.get("listen", ""),
+            "remark": inbound.get("remark", ""),
+            "enable": inbound.get("enable", True),
+            "expiryTime": inbound.get("expiryTime", 0),
+            "total": inbound.get("total", 0),
+            "trafficReset": inbound.get("trafficReset", "never"),
+            "settings": settings,
+            "streamSettings": inbound.get("streamSettings", {}),
+            "sniffing": inbound.get("sniffing", {"enabled": False}),
+            "tag": inbound.get("tag", ""),
+            "shareAddrStrategy": inbound.get("shareAddrStrategy", "listen"),
+            "shareAddr": inbound.get("shareAddr", ""),
+            "subSortIndex": inbound.get("subSortIndex", 1),
+        }
+
         result = await self._api_post(
             f"/panel/api/inbounds/update/{config.XUI_INBOUND_ID}",
-            {"id": config.XUI_INBOUND_ID, "settings": settings}
+            update_data
         )
         return result and result.get("success", False)
 
