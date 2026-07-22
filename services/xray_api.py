@@ -78,6 +78,14 @@ class XRayAPI:
             "enable": True,
             "flow": "xtls-rprx-vision",
             "auth": auth,
+            "password": auth,
+            "subId": email,
+            "limitIp": 0,
+            "totalGB": 0,
+            "expiryTime": 0,
+            "tgId": 0,
+            "security": "auto",
+            "reset": 0,
         })
         settings["clients"] = clients
 
