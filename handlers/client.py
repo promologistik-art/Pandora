@@ -63,8 +63,12 @@ async def get_active_subscription(client_id: int) -> Subscription | None:
         return result.scalar_one_or_none()
 
 
-def build_vless_link(uuid: str, host: str) -> str:
-    return f"vless://{uuid}@{host}:47725?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision#Pandora"
+def build_vless_link(uuid: str, host: str, auth: str = "") -> str:
+    base = f"vless://{uuid}@{host}:47725?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision"
+    if auth:
+        base += f"&password={auth}"
+    base += "#Pandora"
+    return base
 
 
 async def add_referral_bonus(referrer: Client, session):
@@ -194,7 +198,8 @@ async def trial_start(message: types.Message):
         await session.commit()
 
     host = "dashoguz.mooo.com"
-    vless_link = build_vless_link(trial_uuid, host)
+    auth = result.get("auth", "")
+    vless_link = build_vless_link(trial_uuid, host, auth)
 
     await message.answer(
         f"<b>Триал-доступ активирован на {config.TRIAL_DAYS} дня!</b>\n\n"
@@ -249,7 +254,7 @@ async def cmd_status(message: types.Message):
         "2. В приложении добавьте конфигурацию:\n"
         "   Тип: Подписка\n"
         "   Имя: любое (например, Ящик Пандоры)\n"
-        "   URL: сюда вставьте скопированный выше ключ\n"
+        "   URL: скопируйте ключ выше и вставьте\n"
         "3. Готово!\n\n"
         f"<b>Поддержка:</b> @{config.SUPPORT_BOT_USERNAME}",
         reply_markup=status_keyboard()
@@ -320,7 +325,7 @@ async def send_instructions(callback: types.CallbackQuery):
         "3. В приложении добавьте конфигурацию:\n"
         "   Тип: Подписка\n"
         "   Имя: любое\n"
-        "   URL: сюда вставьте скопированный выше ключ\n"
+        "   URL: вставьте скопированный ключ\n"
         "4. Подключитесь\n\n"
         f"Подробные инструкции: @{config.SUPPORT_BOT_USERNAME}"
     )

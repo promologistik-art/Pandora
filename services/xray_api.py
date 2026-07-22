@@ -1,5 +1,6 @@
 import httpx
 import logging
+import secrets
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ class XRayAPI:
         headers = {"Authorization": f"Bearer {self.api_token}"} if self.api_token else {}
         try:
             url = f"{self.base_url}{path}"
-            logger.info(f"3x-ui GET: {url} | Token: {self.api_token[:8]}...")
+            logger.info(f"3x-ui GET: {url}")
             resp = await session.get(url, headers=headers)
             logger.info(f"3x-ui Response: {resp.status_code}")
             resp.raise_for_status()
@@ -68,12 +69,15 @@ class XRayAPI:
             import json
             settings = json.loads(settings)
 
+        auth = secrets.token_hex(8)
+
         clients = settings.get("clients", [])
         clients.append({
             "email": email,
             "id": uuid,
             "enable": True,
-            "flow": "xtls-rprx-vision"
+            "flow": "xtls-rprx-vision",
+            "auth": auth,
         })
         settings["clients"] = clients
 
@@ -107,6 +111,7 @@ class XRayAPI:
                 "uuid": uuid,
                 "email": email,
                 "host": "dashoguz.mooo.com",
+                "auth": auth,
             }
         logger.error(f"3x-ui: ошибка добавления клиента - {result}")
         return None
