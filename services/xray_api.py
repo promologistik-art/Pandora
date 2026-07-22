@@ -8,22 +8,22 @@ logger = logging.getLogger(__name__)
 class XRayAPI:
     def __init__(self):
         self.base_url = config.XUI_HOST.rstrip("/")
+        self.api_token = getattr(config, 'XUI_API_TOKEN', None)
         self._session: httpx.AsyncClient | None = None
 
     async def _get_session(self) -> httpx.AsyncClient:
         if self._session is None:
             self._session = httpx.AsyncClient(verify=False, timeout=30.0)
-            api_token = getattr(config, 'XUI_API_TOKEN', None)
-            if api_token:
-                self._session.headers["Authorization"] = f"Bearer {api_token}"
         return self._session
 
     async def _api_get(self, path: str) -> dict | None:
         session = await self._get_session()
+        headers = {"Authorization": f"Bearer {self.api_token}"} if self.api_token else {}
         try:
             url = f"{self.base_url}{path}"
-            logger.info(f"3x-ui GET: {url}")
-            resp = await session.get(url)
+            logger.info(f"3x-ui GET: {url} | Token: {self.api_token[:8]}...")
+            resp = await session.get(url, headers=headers)
+            logger.info(f"3x-ui Response: {resp.status_code}")
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
@@ -32,10 +32,12 @@ class XRayAPI:
 
     async def _api_post(self, path: str, json_data: dict) -> dict | None:
         session = await self._get_session()
+        headers = {"Authorization": f"Bearer {self.api_token}"} if self.api_token else {}
         try:
             url = f"{self.base_url}{path}"
             logger.info(f"3x-ui POST: {url}")
-            resp = await session.post(url, json=json_data)
+            resp = await session.post(url, json=json_data, headers=headers)
+            logger.info(f"3x-ui Response: {resp.status_code}")
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
@@ -43,7 +45,6 @@ class XRayAPI:
             return None
 
     async def _get_inbound(self) -> dict | None:
-        """Получает inbound по ID из списка."""
         data = await self._api_get("/panel/api/inbounds/list")
         if not data or not data.get("success"):
             logger.error("3x-ui: не удалось получить список inbound")
@@ -103,7 +104,6 @@ class XRayAPI:
 
         clients = settings.get("clients", [])
         new_clients = [c for c in clients if c.get("id") != uuid]
-
         if len(new_clients) == len(clients):
             return False
 
