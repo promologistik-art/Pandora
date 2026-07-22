@@ -1,15 +1,14 @@
 import logging
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 
 from aiogram import Router, types, F
 from aiogram.filters import Command, CommandStart
-from aiogram.types import ReplyKeyboardRemove
 
 from sqlalchemy import select
 
 from config import config
 from database.engine import async_session
-from database.models import Client, Subscription, Payment, EventLog
+from database.models import Client, Subscription, Payment, EventLog, generate_uuid
 from services.xray_api import xray
 from keyboards.client_kb import (
     main_keyboard, tariff_keyboard, payment_keyboard,
@@ -41,7 +40,6 @@ async def get_or_create_client(telegram_id: int, username: str, first_name: str)
             await session.commit()
             await session.refresh(client)
 
-            # Логируем
             event = EventLog(
                 client_id=client.id,
                 event_type="client_created",
@@ -71,51 +69,7 @@ async def get_active_subscription(client_id: int) -> Subscription | None:
 
 def build_vless_link(uuid: str, host: str) -> str:
     """Собирает ссылку VLESS для клиента."""
-    # Упрощённая версия: vless://uuid@host:443?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision#Pandora
     return f"vless://{uuid}@{host}:443?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision#Pandora"
-
-
-# === Команда /start ===
-
-@router.message(CommandStart())
-async def cmd_start(message: types.Message):
-    """Приветствие и главное меню."""
-    client = await get_or_create_client(
-        message.from_user.id,
-        message.from_user.username,
-        message.from_user.first_name
-    )
-
-    # Проверяем реферальную ссылку
-    ref_arg = None
-    args = message.text.split()
-    if len(args) > 1 and args[1].startswith("ref"):
-        try:
-            ref_id = int(args[1][3:])
-            if ref_id != client.id:
-                ref_arg = ref_id
-        except ValueError:
-            pass
-
-    # Обрабатываем реферала
-    if ref_arg and client.referrer_id is None:
-        async with async_session() as session:
-            referrer = await session.get(Client, ref_arg)
-            if referrer:
-                client.referrer_id = ref_arg
-                client.source = "referral"
-                await session.commit()
-
-                # Бонус рефереру
-                await add_referral_bonus(referrer, session)
-
-    welcome = (
-        "<b>Ящик Пандоры</b> - стабильный VPN с умной маршрутизацией.\n"
-        "Заблокированные сайты работают, белые списки не тормозят.\n\n"
-        "<i>Нет Telegram?</i> Инструкции и поддержка ВКонтакте:\n"
-        f"{config.VK_PAGE}"
-    )
-    await message.answer(welcome, reply_markup=main_keyboard())
 
 
 async def add_referral_bonus(referrer: Client, session):
@@ -139,6 +93,62 @@ async def add_referral_bonus(referrer: Client, session):
     )
     session.add(event)
     await session.commit()
+
+
+# === Команда /start ===
+
+@router.message(CommandStart())
+async def cmd_start(message: types.Message):
+    """Приветствие и главное меню."""
+    client = await get_or_create_client(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
+
+    # Уведомление админам о новом клиенте
+    if client.created_at and (datetime.utcnow() - client.created_at).seconds < 10:
+        for admin_id in config.ADMIN_IDS:
+            try:
+                await message.bot.send_message(
+                    admin_id,
+                    f"🆕 <b>Новый пользователь!</b>\n"
+                    f"ID: {client.id}\n"
+                    f"Имя: {client.first_name}\n"
+                    f"Username: @{client.username or 'нет'}"
+                )
+            except Exception as e:
+                logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
+
+    # Проверяем реферальную ссылку
+    ref_arg = None
+    args = message.text.split()
+    if len(args) > 1 and args[1].startswith("ref"):
+        try:
+            ref_id = int(args[1][3:])
+            if ref_id != client.id:
+                ref_arg = ref_id
+        except ValueError:
+            pass
+
+    # Обрабатываем реферала
+    if ref_arg and client.referrer_id is None:
+        async with async_session() as session:
+            referrer = await session.get(Client, ref_arg)
+            if referrer:
+                client.referrer_id = ref_arg
+                client.source = "referral"
+                await session.commit()
+
+                await add_referral_bonus(referrer, session)
+
+    welcome = (
+        "<b>Ящик Пандоры</b> - стабильный VPN с умной маршрутизацией.\n"
+        "Заблокированные сайты работают, белые списки не тормозят.\n\n"
+        "<i>Нет Telegram?</i> Инструкции и поддержка ВКонтакте:\n"
+        f"{config.VK_PAGE}"
+    )
+    await message.answer(welcome, reply_markup=main_keyboard())
 
 
 # === Кнопка "💳 Попробовать 3 дня бесплатно" ===
@@ -168,7 +178,7 @@ async def trial_start(message: types.Message):
             return
 
     # Создаём триал-подписку
-    trial_uuid = Subscription.generate_uuid()
+    trial_uuid = generate_uuid()
 
     # Добавляем клиента в 3x-ui
     result = await xray.add_client(
@@ -398,7 +408,7 @@ async def payment_phone_digits(message: types.Message):
     async with async_session() as session:
         payment = Payment(
             client_id=client.id,
-            amount=0,  # Будет заполнено админом
+            amount=0,
             method="sbp",
             phone_last4=message.text,
         )
