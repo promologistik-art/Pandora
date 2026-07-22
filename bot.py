@@ -1,8 +1,15 @@
 import sys
 import os
+from pathlib import Path
 
-# Добавляем корневую папку проекта в sys.path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Жёстко добавляем папку со скриптом в sys.path
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+# Дублируем для верности — добавляем и родительскую
+if str(SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR.parent))
 
 import asyncio
 import logging
@@ -13,8 +20,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import config
 from database.engine import init_db
-
-# Хендлеры
 from handlers.client import router as client_router
 from handlers.admin import router as admin_router
 from services.scheduler import start_scheduler
@@ -33,11 +38,9 @@ async def main():
     )
     dp = Dispatcher(storage=MemoryStorage())
 
-    # Порядок важен: admin первый для /confirm, /admin
     dp.include_router(admin_router)
     dp.include_router(client_router)
 
-    # Шедулер
     await start_scheduler(bot)
 
     logger.info("Бот @PyxisPandorae_bot запущен")
