@@ -42,14 +42,27 @@ class XRayAPI:
             logger.error(f"3x-ui: ошибка POST {path} - {e}")
             return None
 
-    async def add_client(self, email: str, uuid: str) -> dict | None:
-        data = await self._api_get(f"/panel/api/inbounds/get/{config.XUI_INBOUND_ID}")
+    async def _get_inbound(self) -> dict | None:
+        """Получает inbound по ID из списка."""
+        data = await self._api_get("/panel/api/inbounds/list")
         if not data or not data.get("success"):
-            logger.error("3x-ui: не удалось получить inbound")
+            logger.error("3x-ui: не удалось получить список inbound")
             return None
 
-        inbound_data = data.get("obj", {})
-        settings = inbound_data.get("settings", {})
+        inbounds = data.get("obj", [])
+        for inbound in inbounds:
+            if inbound.get("id") == config.XUI_INBOUND_ID:
+                return inbound
+
+        logger.error(f"3x-ui: inbound с ID {config.XUI_INBOUND_ID} не найден")
+        return None
+
+    async def add_client(self, email: str, uuid: str) -> dict | None:
+        inbound = await self._get_inbound()
+        if not inbound:
+            return None
+
+        settings = inbound.get("settings", {})
         if isinstance(settings, str):
             import json
             settings = json.loads(settings)
@@ -79,18 +92,18 @@ class XRayAPI:
         return None
 
     async def remove_client(self, uuid: str) -> bool:
-        data = await self._api_get(f"/panel/api/inbounds/get/{config.XUI_INBOUND_ID}")
-        if not data:
+        inbound = await self._get_inbound()
+        if not inbound:
             return False
 
-        inbound_data = data.get("obj", {})
-        settings = inbound_data.get("settings", {})
+        settings = inbound.get("settings", {})
         if isinstance(settings, str):
             import json
             settings = json.loads(settings)
 
         clients = settings.get("clients", [])
         new_clients = [c for c in clients if c.get("id") != uuid]
+
         if len(new_clients) == len(clients):
             return False
 
