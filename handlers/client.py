@@ -64,7 +64,7 @@ async def get_active_subscription(client_id: int) -> Subscription | None:
 
 
 def build_vless_link(uuid: str, host: str) -> str:
-    return f"vless://{uuid}@{host}:443?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision#Pandora"
+    return f"vless://{uuid}@{host}:47725?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision#Pandora"
 
 
 async def add_referral_bonus(referrer: Client, session):
@@ -193,7 +193,7 @@ async def trial_start(message: types.Message):
         session.add(event)
         await session.commit()
 
-    host = config.XUI_HOST.split("://")[1].split(":")[0] if "://" in config.XUI_HOST else config.XUI_HOST
+    host = "dashoguz.mooo.com"
     vless_link = build_vless_link(trial_uuid, host)
 
     await message.answer(
@@ -201,8 +201,11 @@ async def trial_start(message: types.Message):
         f"<b>Ваш ключ:</b>\n"
         f"<code>{vless_link}</code>\n\n"
         "<b>Как подключиться:</b>\n"
-        "1. Скачайте приложение (кнопка «🆘 Помощь / FAQ»)\n"
-        "2. Импортируйте ключ в приложение\n"
+        "1. Скачайте приложение Happ (кнопка «🆘 Помощь / FAQ»)\n"
+        "2. В приложении добавьте конфигурацию:\n"
+        "   Тип: Подписка\n"
+        "   Имя: любое (например, Ящик Пандоры)\n"
+        "   URL: скопируйте ключ выше и вставьте\n"
         "3. Готово!\n\n"
         f"<b>Поддержка:</b> @{config.SUPPORT_BOT_USERNAME}",
         reply_markup=status_keyboard()
@@ -228,7 +231,7 @@ async def cmd_status(message: types.Message):
         return
 
     days_left = (sub.expires_at - date.today()).days
-    host = config.XUI_HOST.split("://")[1].split(":")[0] if "://" in config.XUI_HOST else config.XUI_HOST
+    host = "dashoguz.mooo.com"
     vless_link = build_vless_link(sub.xray_uuid, host)
 
     trial_text = " (триал)" if sub.is_trial else ""
@@ -241,6 +244,13 @@ async def cmd_status(message: types.Message):
         f"<b>Осталось дней:</b> {days_left}\n\n"
         "<b>Ваш ключ:</b>\n"
         f"<code>{vless_link}</code>\n\n"
+        "<b>Как подключиться:</b>\n"
+        "1. Скачайте приложение Happ (кнопка «🆘 Помощь / FAQ»)\n"
+        "2. В приложении добавьте конфигурацию:\n"
+        "   Тип: Подписка\n"
+        "   Имя: любое (например, Ящик Пандоры)\n"
+        "   URL: сюда вставьте скопированный выше ключ\n"
+        "3. Готово!\n\n"
         f"<b>Поддержка:</b> @{config.SUPPORT_BOT_USERNAME}",
         reply_markup=status_keyboard()
     )
@@ -251,9 +261,9 @@ async def cmd_help(message: types.Message):
     await message.answer(
         "<b>🆘 Помощь и FAQ</b>\n\n"
         "<b>Частые вопросы:</b>\n"
-        "• Не работает YouTube - попробуйте переподключиться\n"
-        "• Медленная скорость - проверьте сервер в статусе\n"
-        "• Как установить на устройство - см. инструкции ниже\n\n"
+        "- Не работает YouTube - попробуйте переподключиться\n"
+        "- Медленная скорость - проверьте сервер в статусе\n"
+        "- Как установить на устройство - см. инструкции ниже\n\n"
         f"<b>Поддержка:</b> @{config.SUPPORT_BOT_USERNAME}\n"
         f"<b>ВКонтакте:</b> {config.VK_PAGE}",
         reply_markup=help_keyboard()
@@ -305,9 +315,12 @@ async def send_download_link(callback: types.CallbackQuery):
 async def send_instructions(callback: types.CallbackQuery):
     await callback.message.answer(
         "<b>📖 Инструкция по установке:</b>\n\n"
-        "1. Скачайте приложение для вашей платформы\n"
+        "1. Скачайте приложение Happ для вашей платформы\n"
         "2. Скопируйте ключ из раздела «📊 Статус»\n"
-        "3. Импортируйте ключ в приложение\n"
+        "3. В приложении добавьте конфигурацию:\n"
+        "   Тип: Подписка\n"
+        "   Имя: любое\n"
+        "   URL: сюда вставьте скопированный выше ключ\n"
         "4. Подключитесь\n\n"
         f"Подробные инструкции: @{config.SUPPORT_BOT_USERNAME}"
     )
@@ -341,11 +354,11 @@ async def tariff_selected(callback: types.CallbackQuery):
 
     await callback.message.edit_text(
         f"<b>Выбран тариф: {tariff['name']}</b>\n"
-        f"Стоимость: {tariff['price']}₽\n\n"
+        f"Стоимость: {tariff['price']} руб.\n\n"
         "<b>Оплата через СБП:</b>\n"
         f"Банк: {config.SBP_BANK}\n"
         f"Номер: <code>{config.SBP_PHONE}</code>\n"
-        f"Сумма: <b>{tariff['price']}₽</b>\n\n"
+        f"Сумма: <b>{tariff['price']} руб.</b>\n\n"
         "После оплаты нажмите «✅ Я оплатил»\n"
         "и пришлите скриншот или последние 4 цифры номера.",
         reply_markup=payment_keyboard()

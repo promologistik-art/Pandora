@@ -21,7 +21,6 @@ scheduler = AsyncIOScheduler()
 # ============================================================
 
 async def check_expiring_subscriptions(bot: Bot):
-    """Проверяет подписки, истекающие через 3 дня и сегодня."""
     today = date.today()
     async with async_session() as session:
         # Подписки, истекающие через 3 дня
@@ -44,7 +43,6 @@ async def check_expiring_subscriptions(bot: Bot):
                         "Продлите, чтобы не потерять доступ.\n"
                         "Используйте кнопку «💳 Продлить» в статусе."
                     )
-                    logger.info(f"Напоминание за 3 дня: клиент {client.id}")
                 except Exception as e:
                     logger.warning(f"Не удалось отправить напоминание клиенту {client.id}: {e}")
 
@@ -62,7 +60,6 @@ async def check_expiring_subscriptions(bot: Bot):
                 sub.status = "expired"
                 await session.commit()
 
-                # Блокируем в 3x-ui
                 await xray.remove_client(sub.xray_uuid)
 
                 event = EventLog(
@@ -80,7 +77,6 @@ async def check_expiring_subscriptions(bot: Bot):
                         "Доступ приостановлен.\n"
                         "Оплатите, чтобы возобновить."
                     )
-                    logger.info(f"Подписка истекла: клиент {client.id}")
                 except Exception as e:
                     logger.warning(f"Не удалось уведомить клиента {client.id}: {e}")
 
@@ -103,7 +99,6 @@ async def check_expiring_subscriptions(bot: Bot):
                         "<b>Триал заканчивается завтра.</b>\n"
                         "Выберите тариф, чтобы продолжить пользоваться VPN."
                     )
-                    logger.info(f"Напоминание о конце триала: клиент {client.id}")
                 except Exception as e:
                     logger.warning(f"Не удалось уведомить клиента {client.id}: {e}")
 
@@ -113,46 +108,39 @@ async def check_expiring_subscriptions(bot: Bot):
 # ============================================================
 
 async def daily_report(bot: Bot):
-    """Отправляет админам ежедневную сводку."""
     today = date.today()
-    yesterday = today - timedelta(days=1)
 
     async with async_session() as session:
-        # Новые клиенты за сегодня
         new_clients = await session.scalar(
             select(func.count(Client.id))
             .where(func.date(Client.created_at) == today)
         )
 
-        # Новые платежи за сегодня
         payments_today = await session.scalar(
             select(func.sum(Payment.amount))
             .where(Payment.status == "confirmed")
             .where(func.date(Payment.confirmed_at) == today)
         )
 
-        # Активные подписки
         active_subs = await session.scalar(
             select(func.count(Subscription.id))
             .where(Subscription.status == "active")
             .where(Subscription.expires_at >= today)
         )
 
-        # Истекло сегодня
         expired_today = await session.scalar(
             select(func.count(Subscription.id))
             .where(Subscription.status == "expired")
             .where(Subscription.expires_at == today)
         )
 
-        # Всего клиентов
         total_clients = await session.scalar(select(func.count(Client.id)))
 
     report = (
         "<b>Ежедневная сводка</b>\n"
         f"Дата: {today.strftime('%d.%m.%Y')}\n\n"
         f"<b>Новых клиентов:</b> {new_clients or 0}\n"
-        f"<b>Выручка за сегодня:</b> {payments_today or 0}₽\n"
+        f"<b>Выручка за сегодня:</b> {payments_today or 0} руб.\n"
         f"<b>Активных подписок:</b> {active_subs or 0}\n"
         f"<b>Истекло сегодня:</b> {expired_today or 0}\n"
         f"<b>Всего клиентов:</b> {total_clients or 0}"
@@ -172,20 +160,19 @@ async def daily_report(bot: Bot):
 async def monitor_server(bot: Bot):
     """Проверяет доступность 3x-ui и алертит админов при падении."""
     try:
-        logged_in = await xray.login()
-        if not logged_in:
+        data = await xray._api_get("/panel/api/inbounds/list")
+        if data and data.get("success"):
+            logger.info("Мониторинг сервера: 3x-ui онлайн")
+        else:
             for admin_id in config.ADMIN_IDS:
                 try:
                     await bot.send_message(
                         admin_id,
-                        "⚠️ <b>Сервер 3x-ui недоступен!</b>\n"
-                        f"Адрес: {config.XUI_HOST}\n"
-                        "Не удалось авторизоваться."
+                        f"⚠️ <b>Сервер 3x-ui недоступен!</b>\n"
+                        f"Адрес: {config.XUI_HOST}"
                     )
                 except Exception as e:
                     logger.error(f"Не удалось отправить алерт админу {admin_id}: {e}")
-        else:
-            logger.info("Мониторинг сервера: 3x-ui онлайн")
     except Exception as e:
         for admin_id in config.ADMIN_IDS:
             try:
@@ -199,24 +186,10 @@ async def monitor_server(bot: Bot):
 
 
 # ============================================================
-# Задача 4: Уведомление админу о новых клиентах
-# ============================================================
-
-async def notify_new_clients(bot: Bot):
-    """Проверяет новых клиентов за последний час и уведомляет админов."""
-    # Эта функция вызывается при создании клиента в handlers/client.py
-    # Здесь можно добавить агрегированную проверку раз в час
-    pass  # Уведомление реализовано непосредственно в get_or_create_client()
-
-
-# ============================================================
 # Запуск планировщика
 # ============================================================
 
 async def start_scheduler(bot: Bot):
-    """Запускает все периодические задачи."""
-
-    # Напоминания клиентам — каждый день в 10:00
     scheduler.add_job(
         check_expiring_subscriptions,
         CronTrigger(hour=10, minute=0),
@@ -225,7 +198,6 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # Ежедневная сводка админу — каждый день в 9:00
     scheduler.add_job(
         daily_report,
         CronTrigger(hour=9, minute=0),
@@ -234,7 +206,6 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # Мониторинг сервера — каждые 30 минут
     scheduler.add_job(
         monitor_server,
         IntervalTrigger(minutes=30),
@@ -248,6 +219,5 @@ async def start_scheduler(bot: Bot):
 
 
 async def stop_scheduler():
-    """Останавливает планировщик."""
     scheduler.shutdown()
     logger.info("Планировщик остановлен")
