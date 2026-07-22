@@ -1,3 +1,9 @@
+import sys
+import os
+
+# Добавляем корневую папку проекта в sys.path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
@@ -11,6 +17,7 @@ from database.engine import init_db
 # Хендлеры
 from handlers.client import router as client_router
 from handlers.admin import router as admin_router
+from services.scheduler import start_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +36,9 @@ async def main():
     # Порядок важен: admin первый для /confirm, /admin
     dp.include_router(admin_router)
     dp.include_router(client_router)
+
+    # Шедулер
+    await start_scheduler(bot)
 
     logger.info("Бот @PyxisPandorae_bot запущен")
     await dp.start_polling(bot)
