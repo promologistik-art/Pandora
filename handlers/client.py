@@ -2,7 +2,9 @@ import logging
 from datetime import date, timedelta, datetime
 
 from aiogram import Router, types, F
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandStart, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from sqlalchemy import select, func, text
 
@@ -17,6 +19,15 @@ from keyboards.client_kb import (
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+class BroadcastState(StatesGroup):
+    waiting_text = State()
+
+
+class ManageUserState(StatesGroup):
+    waiting_user_id = State()
+    waiting_extend_days = State()
 
 
 async def get_or_create_client(telegram_id: int, username: str, first_name: str) -> Client:
@@ -557,8 +568,143 @@ async def list_clients(callback: types.CallbackQuery):
             sub = await get_active_subscription(c.id)
             sub_text = f"до {sub.expires_at.strftime('%d.%m')}" if sub else "нет подписки"
             text += f"ID: <code>{c.id}</code> | @{c.username or 'нет'}\n  {c.first_name} | {sub_text}\n"
+        text += "\nУправление: /user [ID]"
         await callback.message.answer(text)
     await callback.answer()
+
+
+@router.message(Command("user"))
+async def manage_user(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /user [ID клиента]")
+        return
+    user_id = int(args[1])
+    async with async_session() as session:
+        client = await session.get(Client, user_id)
+        if not client:
+            await message.answer("Клиент не найден.")
+            return
+        sub = await get_active_subscription(client.id)
+        sub_text = f"до {sub.expires_at.strftime('%d.%m.%Y')}" if sub else "нет"
+        text = (
+            f"<b>Клиент #{client.id}</b>\n"
+            f"Имя: {client.first_name}\n"
+            f"Username: @{client.username or 'нет'}\n"
+            f"Подписка: {sub_text}\n\n"
+            f"<b>Действия:</b>\n"
+            f"/extend {client.id} — продлить на N дней\n"
+            f"/deluser {client.id} — удалить клиента\n"
+            f"/delsub {client.id} — удалить подписку клиента\n"
+            f"/cleansub {client.id} — очистить истекшие подписки клиента"
+        )
+    await message.answer(text)
+
+
+@router.message(Command("extend"))
+async def extend_subscription(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("Использование: /extend [ID клиента] [количество дней]")
+        return
+    user_id = int(args[1])
+    days = int(args[2])
+    async with async_session() as session:
+        client = await session.get(Client, user_id)
+        if not client:
+            await message.answer("Клиент не найден.")
+            return
+        sub = await get_active_subscription(client.id)
+        if sub:
+            sub.expires_at = sub.expires_at + timedelta(days=days)
+        else:
+            used_links = await session.execute(
+                select(Subscription.sub_link)
+                .where(Subscription.status == "active")
+                .where(Subscription.expires_at >= date.today())
+            )
+            used = set(row[0] for row in used_links if row[0])
+            free_links = [link for link in config.SUB_LINKS if link not in used]
+            sub_link = free_links[0] if free_links else None
+            sub = Subscription(
+                client_id=client.id,
+                started_at=date.today(),
+                expires_at=date.today() + timedelta(days=days),
+                plan="1month",
+                sub_link=sub_link,
+            )
+            session.add(sub)
+        event = EventLog(
+            client_id=client.id,
+            event_type="subscription_extended",
+            description=f"Подписка продлена на {days} дн."
+        )
+        session.add(event)
+        await session.commit()
+    await message.answer(f"Подписка клиента #{user_id} продлена до {sub.expires_at.strftime('%d.%m.%Y')}.")
+
+
+@router.message(Command("deluser"))
+async def delete_user(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /deluser [ID клиента]")
+        return
+    user_id = int(args[1])
+    async with async_session() as session:
+        client = await session.get(Client, user_id)
+        if not client:
+            await message.answer("Клиент не найден.")
+            return
+        await session.delete(client)
+        await session.commit()
+    await message.answer(f"Клиент #{user_id} удалён.")
+
+
+@router.message(Command("delsub"))
+async def delete_subscription(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /delsub [ID клиента]")
+        return
+    user_id = int(args[1])
+    async with async_session() as session:
+        result = await session.execute(
+            select(Subscription)
+            .where(Subscription.client_id == user_id)
+            .where(Subscription.status == "active")
+        )
+        subs = result.scalars().all()
+        for s in subs:
+            s.status = "cancelled"
+        await session.commit()
+    await message.answer(f"Активные подписки клиента #{user_id} удалены.")
+
+
+@router.message(Command("cleansub"))
+async def clean_user_subscriptions(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /cleansub [ID клиента]")
+        return
+    user_id = int(args[1])
+    async with async_session() as session:
+        await session.execute(
+            text("UPDATE subscriptions SET status = 'expired' WHERE client_id = :uid AND status = 'active' AND expires_at < CURRENT_DATE"),
+            {"uid": user_id}
+        )
+        await session.commit()
+    await message.answer(f"Истекшие подписки клиента #{user_id} очищены.")
 
 
 @router.callback_query(F.data == "admin:stats")
@@ -609,12 +755,32 @@ async def server_status(callback: types.CallbackQuery):
 
 
 @router.callback_query(F.data == "admin:broadcast")
-async def broadcast_start(callback: types.CallbackQuery):
+async def broadcast_start(callback: types.CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.")
         return
     await callback.message.answer("Введите сообщение для рассылки всем клиентам.\nДля отмены: /cancel")
+    await state.set_state(BroadcastState.waiting_text)
     await callback.answer()
+
+
+@router.message(BroadcastState.waiting_text, F.text)
+async def broadcast_send(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    text = message.text
+    async with async_session() as session:
+        result = await session.execute(select(Client.telegram_id))
+        clients = result.scalars().all()
+    success = 0
+    for tid in clients:
+        try:
+            await message.bot.send_message(tid, f"📢 <b>Рассылка</b>\n\n{text}")
+            success += 1
+        except Exception:
+            pass
+    await message.answer(f"Рассылка отправлена: {success}/{len(clients)} клиентов.")
+    await state.clear()
 
 
 @router.callback_query(F.data == "admin:cleanup")
