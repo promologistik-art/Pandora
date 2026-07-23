@@ -19,6 +19,7 @@ from keyboards.client_kb import (
     tariff_keyboard, payment_keyboard, status_keyboard,
     help_keyboard, downloads_keyboard, referral_keyboard
 )
+from keyboards.admin_kb import payment_confirm_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
