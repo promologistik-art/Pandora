@@ -4,7 +4,7 @@ from datetime import date, timedelta, datetime
 from aiogram import Router, types, F
 from aiogram.filters import Command, CommandStart
 
-from sqlalchemy import select
+from sqlalchemy import select, func, text
 
 from config import config
 from database.engine import async_session
@@ -141,12 +141,40 @@ async def cmd_start(message: types.Message):
         await message.answer(welcome, reply_markup=main_keyboard())
 
 
-@router.message(F.text == "💳 Попробовать 3 дня бесплатно")
-async def trial_start(message: types.Message):
+# ========================
+# Команды
+# ========================
+
+@router.message(Command("status"))
+async def cmd_status_command(message: types.Message):
+    await show_status(message)
+
+
+@router.message(Command("help"))
+async def cmd_help_command(message: types.Message):
+    await show_help(message)
+
+
+@router.message(Command("invite"))
+async def cmd_invite_command(message: types.Message):
+    await show_invite(message)
+
+
+@router.message(Command("admin"))
+async def cmd_admin_command(message: types.Message):
+    await show_admin_panel(message)
+
+
+# ========================
+# Inline-кнопки главного меню
+# ========================
+
+@router.callback_query(F.data == "menu:trial")
+async def trial_start(callback: types.CallbackQuery):
     client = await get_or_create_client(
-        message.from_user.id,
-        message.from_user.username,
-        message.from_user.first_name
+        callback.from_user.id,
+        callback.from_user.username,
+        callback.from_user.first_name
     )
 
     async with async_session() as session:
@@ -157,11 +185,11 @@ async def trial_start(message: types.Message):
             .where(Subscription.expires_at >= date.today())
         )
         if result.scalar_one_or_none():
-            await message.answer(
+            await callback.message.answer(
                 "У вас уже есть активная подписка.\n"
-                "Проверьте статус: кнопка «📊 Статус»",
-                reply_markup=main_keyboard()
+                "Проверьте статус: кнопка «📊 Статус»"
             )
+            await callback.answer()
             return
 
         used_links = await session.execute(
@@ -174,11 +202,11 @@ async def trial_start(message: types.Message):
     free_links = [link for link in config.SUB_LINKS if link not in used]
 
     if not free_links:
-        await message.answer(
+        await callback.message.answer(
             "К сожалению, все пробные места сейчас заняты.\n"
-            "Попробуйте позже или свяжитесь с поддержкой.",
-            reply_markup=main_keyboard()
+            "Попробуйте позже или свяжитесь с поддержкой."
         )
+        await callback.answer()
         return
 
     sub_link = free_links[0]
@@ -202,7 +230,7 @@ async def trial_start(message: types.Message):
         session.add(event)
         await session.commit()
 
-    await message.answer(
+    await callback.message.answer(
         f"<b>Триал-доступ активирован на {config.TRIAL_DAYS} дня!</b>\n\n"
         f"<b>Ваша ссылка:</b>\n"
         f"<code>{sub_link}</code>\n\n"
@@ -216,14 +244,42 @@ async def trial_start(message: types.Message):
         f"<b>Поддержка:</b> @{config.SUPPORT_BOT_USERNAME}",
         reply_markup=status_keyboard()
     )
+    await callback.answer()
 
 
-@router.message(F.text == "📊 Статус")
-async def cmd_status(message: types.Message):
+@router.callback_query(F.data == "menu:status")
+async def status_callback(callback: types.CallbackQuery):
+    await show_status(callback.message)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu:help")
+async def help_callback(callback: types.CallbackQuery):
+    await show_help(callback.message)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu:invite")
+async def invite_callback(callback: types.CallbackQuery):
+    await show_invite(callback.message)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu:admin")
+async def admin_callback(callback: types.CallbackQuery):
+    await show_admin_panel(callback.message)
+    await callback.answer()
+
+
+# ========================
+# Общие функции (используются и командами, и кнопками)
+# ========================
+
+async def show_status(message: types.Message):
     client = await get_or_create_client(
-        message.from_user.id,
-        message.from_user.username,
-        message.from_user.first_name
+        message.chat.id,
+        message.from_user.username if message.from_user else None,
+        message.from_user.first_name if message.from_user else "Пользователь"
     )
 
     sub = await get_active_subscription(client.id)
@@ -260,8 +316,7 @@ async def cmd_status(message: types.Message):
     )
 
 
-@router.message(F.text == "🆘 Помощь / FAQ")
-async def cmd_help(message: types.Message):
+async def show_help(message: types.Message):
     await message.answer(
         "<b>🆘 Помощь и FAQ</b>\n\n"
         "<b>Частые вопросы:</b>\n"
@@ -273,6 +328,32 @@ async def cmd_help(message: types.Message):
         reply_markup=help_keyboard()
     )
 
+
+async def show_invite(message: types.Message):
+    client = await get_or_create_client(
+        message.chat.id,
+        message.from_user.username if message.from_user else None,
+        message.from_user.first_name if message.from_user else "Пользователь"
+    )
+
+    await message.answer(
+        f"<b>🎁 Пригласите друга - получите {config.REFERRAL_BONUS_DAYS} дней бесплатно!</b>\n\n"
+        "Ваш друг получит доступ, а вы - бонусные дни.\n\n"
+        "Отправьте другу эту ссылку:",
+        reply_markup=referral_keyboard(client.id)
+    )
+
+
+async def show_admin_panel(message: types.Message):
+    if not is_admin(message.chat.id):
+        await message.answer("Недостаточно прав.")
+        return
+    await message.answer("<b>Админ-панель</b>", reply_markup=admin_keyboard())
+
+
+# ========================
+# Help: downloads, instructions
+# ========================
 
 @router.callback_query(F.data == "help:downloads")
 async def show_downloads(callback: types.CallbackQuery):
@@ -331,21 +412,9 @@ async def send_instructions(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@router.message(F.text == "🎁 Пригласить друга")
-async def invite_friend(message: types.Message):
-    client = await get_or_create_client(
-        message.from_user.id,
-        message.from_user.username,
-        message.from_user.first_name
-    )
-
-    await message.answer(
-        f"<b>🎁 Пригласите друга - получите {config.REFERRAL_BONUS_DAYS} дней бесплатно!</b>\n\n"
-        "Ваш друг получит доступ, а вы - бонусные дни.\n\n"
-        "Отправьте другу эту ссылку:",
-        reply_markup=referral_keyboard(client.id)
-    )
-
+# ========================
+# Тарифы
+# ========================
 
 @router.callback_query(F.data.startswith("tariff:"))
 async def tariff_selected(callback: types.CallbackQuery):
@@ -378,6 +447,10 @@ async def show_tariffs(callback: types.CallbackQuery):
     )
     await callback.answer()
 
+
+# ========================
+# Оплата
+# ========================
 
 @router.callback_query(F.data == "payment:confirm")
 async def payment_confirm(callback: types.CallbackQuery):
@@ -463,26 +536,12 @@ async def payment_screenshot(message: types.Message):
 
 
 # ========================
-# Админские кнопки
+# Админские callback-кнопки
 # ========================
 
-@router.message(F.text == "⚙️ Админка")
-async def admin_panel(message: types.Message):
-    if not is_admin(message.from_user.id):
-        return
-    await message.answer("<b>Админ-панель</b>", reply_markup=admin_keyboard())
-
-
-@router.message(F.text == "🔙 Выйти из админки")
-async def exit_admin(message: types.Message):
-    if not is_admin(message.from_user.id):
-        return
-    await message.answer("Выход из админки.", reply_markup=admin_main_keyboard())
-
-
-@router.message(F.text == "👥 Клиенты")
-async def list_clients(message: types.Message):
-    if not is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:clients")
+async def list_clients(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
         return
     async with async_session() as session:
         result = await session.execute(
@@ -490,19 +549,20 @@ async def list_clients(message: types.Message):
         )
         clients = result.scalars().all()
     if not clients:
-        await message.answer("Клиентов пока нет.")
-        return
-    text = "<b>Последние 20 клиентов:</b>\n\n"
-    for c in clients:
-        sub = await get_active_subscription(c.id)
-        sub_text = f"до {sub.expires_at.strftime('%d.%m')}" if sub else "нет подписки"
-        text += f"ID: <code>{c.id}</code> | @{c.username or 'нет'}\n  {c.first_name} | {sub_text}\n"
-    await message.answer(text)
+        await callback.message.answer("Клиентов пока нет.")
+    else:
+        text = "<b>Последние 20 клиентов:</b>\n\n"
+        for c in clients:
+            sub = await get_active_subscription(c.id)
+            sub_text = f"до {sub.expires_at.strftime('%d.%m')}" if sub else "нет подписки"
+            text += f"ID: <code>{c.id}</code> | @{c.username or 'нет'}\n  {c.first_name} | {sub_text}\n"
+        await callback.message.answer(text)
+    await callback.answer()
 
 
-@router.message(F.text == "📊 Статистика")
-async def show_stats(message: types.Message):
-    if not is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:stats")
+async def show_stats(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
         return
     async with async_session() as session:
         total_clients = await session.scalar(select(func.count(Client.id)))
@@ -519,56 +579,64 @@ async def show_stats(message: types.Message):
             .where(Payment.status == "confirmed")
             .where(func.date_trunc("month", Payment.confirmed_at) == func.date_trunc("month", func.now()))
         )
-    await message.answer(
+    await callback.message.answer(
         "<b>📊 Статистика</b>\n\n"
         f"<b>Всего клиентов:</b> {total_clients or 0}\n"
         f"<b>Активных подписок:</b> {active_subs or 0}\n"
         f"<b>Выручка за всё время:</b> {total_payments or 0} руб.\n"
         f"<b>Выручка за месяц:</b> {month_payments or 0} руб."
     )
+    await callback.answer()
 
 
-@router.message(F.text == "🖥 Сервер")
-async def server_status(message: types.Message):
-    if not is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:server")
+async def server_status(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
         return
     try:
         from services.xray_api import xray
         data = await xray._api_get("/panel/api/inbounds/list")
         if data and data.get("success"):
-            await message.answer(f"<b>🖥 Статус сервера</b>\n\n3x-ui: <b>онлайн</b>\nАдрес: {config.XUI_HOST}")
+            await callback.message.answer(f"<b>🖥 Статус сервера</b>\n\n3x-ui: <b>онлайн</b>\nАдрес: {config.XUI_HOST}")
         else:
-            await message.answer(f"<b>🖥 Статус сервера</b>\n\n3x-ui: <b>ошибка подключения</b>\nАдрес: {config.XUI_HOST}")
+            await callback.message.answer(f"<b>🖥 Статус сервера</b>\n\n3x-ui: <b>ошибка подключения</b>\nАдрес: {config.XUI_HOST}")
     except Exception as e:
-        await message.answer(f"<b>🖥 Статус сервера</b>\n\n3x-ui: <b>ошибка</b>\n{e}")
+        await callback.message.answer(f"<b>🖥 Статус сервера</b>\n\n3x-ui: <b>ошибка</b>\n{e}")
+    await callback.answer()
 
 
-@router.message(F.text == "📢 Рассылка")
-async def broadcast_start(message: types.Message):
-    if not is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:broadcast")
+async def broadcast_start(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
         return
-    await message.answer("Введите сообщение для рассылки всем клиентам.\nДля отмены: /cancel")
+    await callback.message.answer("Введите сообщение для рассылки всем клиентам.\nДля отмены: /cancel")
+    await callback.answer()
 
 
-@router.message(F.text == "🧹 Очистка подписок")
-async def cleanup_subscriptions(message: types.Message):
-    if not is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:cleanup")
+async def cleanup_subscriptions(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
         return
-    from sqlalchemy import text
     async with async_session() as session:
         await session.execute(
             text("UPDATE subscriptions SET status = 'expired' WHERE status = 'active' AND expires_at < CURRENT_DATE")
         )
         await session.commit()
-    await message.answer("Истекшие подписки очищены.")
+    await callback.message.answer("Истекшие подписки очищены.")
+    await callback.answer()
 
 
-@router.message(Command("cancel"))
-async def cancel_action(message: types.Message):
-    if not is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:exit")
+async def exit_admin(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
         return
-    await message.answer("Действие отменено.", reply_markup=admin_keyboard())
+    await callback.message.answer("Выход из админки.", reply_markup=admin_main_keyboard())
+    await callback.answer()
 
+
+# ========================
+# Команды confirm / reject
+# ========================
 
 @router.message(Command("confirm"))
 async def confirm_payment(message: types.Message):
