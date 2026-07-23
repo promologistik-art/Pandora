@@ -39,7 +39,7 @@ async def check_expiring_subscriptions(bot: Bot):
                 try:
                     await bot.send_message(
                         client.telegram_id,
-                        "<b>Ваша подписка истекает через 3 дня.</b>\n"
+                        "<b>⏰ Ваша подписка истекает через 3 дня.</b>\n"
                         "Продлите, чтобы не потерять доступ.\n"
                         "Используйте кнопку «💳 Продлить» в статусе."
                     )
@@ -73,7 +73,7 @@ async def check_expiring_subscriptions(bot: Bot):
                 try:
                     await bot.send_message(
                         client.telegram_id,
-                        "<b>Подписка истекла.</b>\n"
+                        "<b>❌ Подписка истекла.</b>\n"
                         "Доступ приостановлен.\n"
                         "Оплатите, чтобы возобновить."
                     )
@@ -96,7 +96,7 @@ async def check_expiring_subscriptions(bot: Bot):
                 try:
                     await bot.send_message(
                         client.telegram_id,
-                        "<b>Триал заканчивается завтра.</b>\n"
+                        "<b>⏰ Триал заканчивается завтра.</b>\n"
                         "Выберите тариф, чтобы продолжить пользоваться VPN."
                     )
                 except Exception as e:
@@ -137,7 +137,7 @@ async def daily_report(bot: Bot):
         total_clients = await session.scalar(select(func.count(Client.id)))
 
     report = (
-        "<b>Ежедневная сводка</b>\n"
+        "<b>📊 Ежедневная сводка</b>\n"
         f"Дата: {today.strftime('%d.%m.%Y')}\n\n"
         f"<b>Новых клиентов:</b> {new_clients or 0}\n"
         f"<b>Выручка за сегодня:</b> {payments_today or 0} руб.\n"
@@ -160,8 +160,7 @@ async def daily_report(bot: Bot):
 async def monitor_server(bot: Bot):
     """Проверяет доступность 3x-ui и алертит админов при падении."""
     try:
-        data = await xray._api_get("/panel/api/inbounds/list")
-        if data and data.get("success"):
+        if await xray.check_health():
             logger.info("Мониторинг сервера: 3x-ui онлайн")
         else:
             for admin_id in config.ADMIN_IDS:

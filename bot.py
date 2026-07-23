@@ -2,22 +2,24 @@ import sys
 import os
 from pathlib import Path
 
+# Жёстко добавляем папку со скриптом в sys.path
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+
+# Дублируем для верности — добавляем и родительскую
 if str(SCRIPT_DIR.parent) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR.parent))
 
 import asyncio
 import logging
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import config
 from database.engine import init_db
-
 from handlers.client import router as client_router
 from handlers.admin import router as admin_router
 from services.scheduler import start_scheduler
@@ -36,16 +38,9 @@ async def main():
     )
     dp = Dispatcher(storage=MemoryStorage())
 
-    await bot.set_my_commands([
-        types.BotCommand(command="start", description="Главное меню"),
-        types.BotCommand(command="status", description="Статус подписки"),
-        types.BotCommand(command="help", description="Помощь и FAQ"),
-        types.BotCommand(command="invite", description="Пригласить друга"),
-        types.BotCommand(command="admin", description="Админ-панель"),
-    ])
-
-    dp.include_router(admin_router)
-    dp.include_router(client_router)
+    # Подключаем оба роутера
+    dp.include_router(admin_router)   # Админские команды
+    dp.include_router(client_router)  # Клиентские команды
 
     await start_scheduler(bot)
 

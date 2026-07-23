@@ -4,39 +4,18 @@ from config import config
 
 
 def main_keyboard() -> InlineKeyboardMarkup:
+    """Главное меню клиента."""
     builder = InlineKeyboardBuilder()
     builder.button(text="💳 Попробовать 3 дня бесплатно", callback_data="menu:trial")
     builder.button(text="📊 Статус", callback_data="menu:status")
     builder.button(text="🆘 Помощь / FAQ", callback_data="menu:help")
     builder.button(text="🎁 Пригласить друга", callback_data="menu:invite")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def admin_main_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="💳 Попробовать 3 дня бесплатно", callback_data="menu:trial")
-    builder.button(text="📊 Статус", callback_data="menu:status")
-    builder.button(text="🆘 Помощь / FAQ", callback_data="menu:help")
-    builder.button(text="🎁 Пригласить друга", callback_data="menu:invite")
-    builder.button(text="⚙️ Админка", callback_data="menu:admin")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def admin_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="👥 Клиенты", callback_data="admin:clients")
-    builder.button(text="📊 Статистика", callback_data="admin:stats")
-    builder.button(text="🖥 Сервер", callback_data="admin:server")
-    builder.button(text="📢 Рассылка", callback_data="admin:broadcast")
-    builder.button(text="🧹 Очистка истекших", callback_data="admin:cleanup")
-    builder.button(text="🔙 Выйти из админки", callback_data="admin:exit")
     builder.adjust(1)
     return builder.as_markup()
 
 
 def tariff_keyboard() -> InlineKeyboardMarkup:
+    """Выбор тарифа."""
     builder = InlineKeyboardBuilder()
     for key, tariff in config.TARIFFS.items():
         builder.button(text=f"{tariff['name']} - {tariff['price']} руб.", callback_data=f"tariff:{key}")
@@ -45,6 +24,7 @@ def tariff_keyboard() -> InlineKeyboardMarkup:
 
 
 def payment_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура после выбора тарифа."""
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Я оплатил", callback_data="payment:confirm")
     builder.button(text="📞 Поддержка", url=f"https://t.me/{config.SUPPORT_BOT_USERNAME}")
@@ -53,6 +33,7 @@ def payment_keyboard() -> InlineKeyboardMarkup:
 
 
 def status_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура в статусе."""
     builder = InlineKeyboardBuilder()
     builder.button(text="💳 Продлить подписку", callback_data="menu:tariffs")
     builder.button(text="📞 Поддержка", url=f"https://t.me/{config.SUPPORT_BOT_USERNAME}")
@@ -61,6 +42,7 @@ def status_keyboard() -> InlineKeyboardMarkup:
 
 
 def help_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура помощи."""
     builder = InlineKeyboardBuilder()
     builder.button(text="📥 Скачать приложения", callback_data="help:downloads")
     builder.button(text="📖 Инструкция", callback_data="help:instructions")
@@ -70,6 +52,7 @@ def help_keyboard() -> InlineKeyboardMarkup:
 
 
 def downloads_keyboard() -> InlineKeyboardMarkup:
+    """Ссылки на скачивание."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🖥 Windows", callback_data="download:windows")
     builder.button(text="🍎 macOS", callback_data="download:macos")
@@ -81,7 +64,8 @@ def downloads_keyboard() -> InlineKeyboardMarkup:
 
 
 def referral_keyboard(client_id: int) -> InlineKeyboardMarkup:
-    ref_link = f"https://t.me/PyxisPandorae_bot?start=ref{client_id}"
+    """Клавиатура реферальной программы."""
+    ref_link = f"https://t.me/{config.BOT_USERNAME}?start=ref{client_id}"
     builder = InlineKeyboardBuilder()
     builder.button(text="🔗 Моя ссылка", url=ref_link)
     builder.adjust(1)
