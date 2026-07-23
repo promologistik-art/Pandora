@@ -1,52 +1,45 @@
-from aiogram.types import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
-
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import config
 
 
-def main_keyboard() -> ReplyKeyboardMarkup:
-    """Главное меню клиента."""
-    builder = ReplyKeyboardBuilder()
-    builder.button(text="💳 Попробовать 3 дня бесплатно")
-    builder.button(text="📊 Статус")
-    builder.button(text="🆘 Помощь / FAQ")
-    builder.button(text="🎁 Пригласить друга")
-    builder.adjust(1, 2, 1)
-    return builder.as_markup(resize_keyboard=True)
+def main_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💳 Попробовать 3 дня бесплатно", callback_data="menu:trial")
+    builder.button(text="📊 Статус", callback_data="menu:status")
+    builder.button(text="🆘 Помощь / FAQ", callback_data="menu:help")
+    builder.button(text="🎁 Пригласить друга", callback_data="menu:invite")
+    builder.adjust(1)
+    return builder.as_markup()
 
 
-def admin_main_keyboard() -> ReplyKeyboardMarkup:
-    """Главное меню админа (объединённое)."""
-    builder = ReplyKeyboardBuilder()
-    builder.button(text="💳 Попробовать 3 дня бесплатно")
-    builder.button(text="📊 Статус")
-    builder.button(text="🆘 Помощь / FAQ")
-    builder.button(text="🎁 Пригласить друга")
-    builder.button(text="⚙️ Админка")
-    builder.adjust(1, 2, 1, 1)
-    return builder.as_markup(resize_keyboard=True)
+def admin_main_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💳 Попробовать 3 дня бесплатно", callback_data="menu:trial")
+    builder.button(text="📊 Статус", callback_data="menu:status")
+    builder.button(text="🆘 Помощь / FAQ", callback_data="menu:help")
+    builder.button(text="🎁 Пригласить друга", callback_data="menu:invite")
+    builder.button(text="⚙️ Админка", callback_data="menu:admin")
+    builder.adjust(1)
+    return builder.as_markup()
 
 
-def admin_keyboard() -> ReplyKeyboardMarkup:
-    """Меню админки."""
-    builder = ReplyKeyboardBuilder()
-    builder.button(text="👥 Клиенты")
-    builder.button(text="📊 Статистика")
-    builder.button(text="🖥 Сервер")
-    builder.button(text="📢 Рассылка")
-    builder.button(text="🧹 Очистка подписок")
-    builder.button(text="🔙 Выйти из админки")
-    builder.adjust(2, 2, 1, 1)
-    return builder.as_markup(resize_keyboard=True)
+def admin_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👥 Клиенты", callback_data="admin:clients")
+    builder.button(text="📊 Статистика", callback_data="admin:stats")
+    builder.button(text="🖥 Сервер", callback_data="admin:server")
+    builder.button(text="📢 Рассылка", callback_data="admin:broadcast")
+    builder.button(text="🧹 Очистка подписок", callback_data="admin:cleanup")
+    builder.button(text="🔙 Выйти из админки", callback_data="admin:exit")
+    builder.adjust(1)
+    return builder.as_markup()
 
 
 def tariff_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for key, tariff in config.TARIFFS.items():
-        builder.button(
-            text=f"{tariff['name']} - {tariff['price']} руб.",
-            callback_data=f"tariff:{key}"
-        )
+        builder.button(text=f"{tariff['name']} - {tariff['price']} руб.", callback_data=f"tariff:{key}")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -88,7 +81,7 @@ def downloads_keyboard() -> InlineKeyboardMarkup:
 
 
 def referral_keyboard(client_id: int) -> InlineKeyboardMarkup:
-    ref_link = f"https://t.me/{(config.BOT_TOKEN.split(':')[0])}?start=ref{client_id}"
+    ref_link = f"https://t.me/PyxisPandorae_bot?start=ref{client_id}"
     builder = InlineKeyboardBuilder()
     builder.button(text="🔗 Моя ссылка", url=ref_link)
     builder.adjust(1)
