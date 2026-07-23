@@ -14,10 +14,11 @@ from services.client_service import (
     is_admin, add_referral_bonus, get_free_sub_link
 )
 from keyboards.client_kb import (
-    main_keyboard, admin_main_keyboard,
+    main_keyboard,
     tariff_keyboard, payment_keyboard, status_keyboard,
     help_keyboard, downloads_keyboard, referral_keyboard
 )
+from keyboards.admin_kb import admin_main_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
