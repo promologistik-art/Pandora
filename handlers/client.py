@@ -15,11 +15,10 @@ from services.client_service import (
     is_admin, add_referral_bonus, get_free_sub_link
 )
 from keyboards.client_kb import (
-    main_keyboard,
+    main_keyboard, admin_main_keyboard,
     tariff_keyboard, payment_keyboard, status_keyboard,
     help_keyboard, downloads_keyboard, referral_keyboard
 )
-from keyboards.admin_kb import admin_main_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -31,11 +30,21 @@ router = Router()
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message):
-    # ⚠️ ВАЖНО: Сначала убираем старую Reply-клавиатуру
-    await message.answer(
-        "⏳ Обновляем меню...",
-        reply_markup=ReplyKeyboardRemove()
-    )
+    # Проверяем, не забанен ли пользователь
+    async with async_session() as session:
+        result = await session.execute(
+            select(Client).where(Client.telegram_id == message.from_user.id)
+        )
+        client = result.scalar_one_or_none()
+        if client and client.status == "banned":
+            await message.answer(
+                "🚫 <b>Ваш доступ заблокирован.</b>\n\n"
+                f"Свяжитесь с поддержкой: @{config.SUPPORT_BOT_USERNAME}"
+            )
+            return
+
+    # Сразу убираем старую Reply-клавиатуру
+    await message.answer("⏳ Обновляем меню...", reply_markup=ReplyKeyboardRemove())
 
     client = await get_or_create_client(
         message.from_user.id,
@@ -102,6 +111,15 @@ async def trial_start(callback: types.CallbackQuery):
         callback.from_user.username,
         callback.from_user.first_name
     )
+
+    # Проверяем, не забанен ли пользователь
+    if client.status == "banned":
+        await callback.message.answer(
+            "🚫 <b>Ваш доступ заблокирован.</b>\n\n"
+            f"Свяжитесь с поддержкой: @{config.SUPPORT_BOT_USERNAME}"
+        )
+        await callback.answer()
+        return
 
     async with async_session() as session:
         # Проверяем, есть ли уже активная подписка
@@ -185,6 +203,13 @@ async def show_status(message: types.Message):
         message.from_user.username if message.from_user else None,
         message.from_user.first_name if message.from_user else "Пользователь"
     )
+
+    if client.status == "banned":
+        await message.answer(
+            "🚫 <b>Ваш доступ заблокирован.</b>\n\n"
+            f"Свяжитесь с поддержкой: @{config.SUPPORT_BOT_USERNAME}"
+        )
+        return
 
     sub = await get_active_subscription(client.id)
 
@@ -331,10 +356,21 @@ async def show_invite(message: types.Message):
         message.from_user.first_name if message.from_user else "Пользователь"
     )
 
+    if client.status == "banned":
+        await message.answer(
+            "🚫 <b>Ваш доступ заблокирован.</b>\n\n"
+            f"Свяжитесь с поддержкой: @{config.SUPPORT_BOT_USERNAME}"
+        )
+        return
+
+    ref_link = f"https://t.me/{config.BOT_USERNAME}?start=ref{client.id}"
+
     await message.answer(
         f"<b>🎁 Пригласите друга — получите {config.REFERRAL_BONUS_DAYS} дней бесплатно!</b>\n\n"
         "Ваш друг получит доступ, а вы — бонусные дни.\n\n"
-        "Отправьте другу эту ссылку:",
+        f"<b>Ваша ссылка:</b>\n"
+        f"<code>{ref_link}</code>\n\n"
+        "Или нажмите кнопку ниже, чтобы поделиться:",
         reply_markup=referral_keyboard(client.id)
     )
 
@@ -381,6 +417,20 @@ async def tariff_selected(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "payment:confirm")
 async def payment_confirm(callback: types.CallbackQuery):
+    client = await get_or_create_client(
+        callback.from_user.id,
+        callback.from_user.username,
+        callback.from_user.first_name
+    )
+
+    if client.status == "banned":
+        await callback.message.answer(
+            "🚫 <b>Ваш доступ заблокирован.</b>\n\n"
+            f"Свяжитесь с поддержкой: @{config.SUPPORT_BOT_USERNAME}"
+        )
+        await callback.answer()
+        return
+
     await callback.message.answer(
         "📝 Пришлите скриншот оплаты или последние 4 цифры номера, с которого перевели.\n"
         "Администратор проверит платёж и активирует подписку."
@@ -395,6 +445,13 @@ async def payment_phone_digits(message: types.Message):
         message.from_user.username,
         message.from_user.first_name
     )
+
+    if client.status == "banned":
+        await message.answer(
+            "🚫 <b>Ваш доступ заблокирован.</b>\n\n"
+            f"Свяжитесь с поддержкой: @{config.SUPPORT_BOT_USERNAME}"
+        )
+        return
 
     async with async_session() as session:
         payment = Payment(
@@ -412,8 +469,8 @@ async def payment_phone_digits(message: types.Message):
                     admin_id,
                     f"🔔 <b>Новый платёж</b>\n"
                     f"Клиент: @{client.username} (ID: {client.id})\n"
-                    f"Последние 4 цифры: <code>{message.text}</code>\n"
-                    f"Подтвердить: <code>/confirm {payment.id}</code>"
+                    f"Последние 4 цифры: <code>{message.text}</code>",
+                    reply_markup=payment_confirm_keyboard(payment.id)
                 )
             except Exception as e:
                 logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
@@ -432,6 +489,13 @@ async def payment_screenshot(message: types.Message):
         message.from_user.first_name
     )
 
+    if client.status == "banned":
+        await message.answer(
+            "🚫 <b>Ваш доступ заблокирован.</b>\n\n"
+            f"Свяжитесь с поддержкой: @{config.SUPPORT_BOT_USERNAME}"
+        )
+        return
+
     async with async_session() as session:
         payment = Payment(
             client_id=client.id,
@@ -448,10 +512,9 @@ async def payment_screenshot(message: types.Message):
                     message.photo[-1].file_id,
                     caption=(
                         f"🔔 <b>Новый платёж (скриншот)</b>\n"
-                        f"Клиент: @{client.username} (ID: {client.id})\n"
-                        f"Подтвердить: <code>/confirm {payment.id} [сумма]</code>\n"
-                        f"Отклонить: <code>/reject {payment.id}</code>"
-                    )
+                        f"Клиент: @{client.username} (ID: {client.id})"
+                    ),
+                    reply_markup=payment_confirm_keyboard(payment.id)
                 )
             except Exception as e:
                 logger.error(f"Не удалось уведомить админа {admin_id}: {e}")

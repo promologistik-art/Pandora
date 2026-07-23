@@ -23,6 +23,7 @@ async def get_or_create_client(telegram_id: int, username: str, first_name: str)
                 telegram_id=telegram_id,
                 username=username,
                 first_name=first_name,
+                status="active",
             )
             session.add(client)
             await session.commit()
@@ -93,3 +94,13 @@ async def get_free_sub_link(session) -> str | None:
     used = set(row[0] for row in used_links if row[0])
     free_links = [link for link in config.SUB_LINKS if link not in used]
     return free_links[0] if free_links else None
+
+
+async def is_client_banned(telegram_id: int) -> bool:
+    """Проверить, забанен ли клиент."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Client.status).where(Client.telegram_id == telegram_id)
+        )
+        status = result.scalar_one_or_none()
+        return status == "banned"

@@ -22,6 +22,7 @@ class Client(Base):
     phone = Column(String(20))
     source = Column(String(100))
     referrer_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+    status = Column(String(20), default="active")  # active, banned
     created_at = Column(DateTime, default=datetime.utcnow)
 
     subscriptions = relationship("Subscription", back_populates="client", lazy="selectin")
@@ -39,7 +40,7 @@ class Subscription(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     started_at = Column(Date, nullable=False, default=date.today)
     expires_at = Column(Date, nullable=False)
-    status = Column(String(20), default="active")
+    status = Column(String(20), default="active")  # active, expired, cancelled, banned, cleaned
     plan = Column(String(20), default="1month")
     is_trial = Column(Boolean, default=False)
     xray_uuid = Column(String(64), default=generate_uuid)
@@ -56,7 +57,7 @@ class Payment(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     amount = Column(DECIMAL(10, 2), nullable=False)
     method = Column(String(20), default="sbp")
-    status = Column(String(20), default="pending")
+    status = Column(String(20), default="pending")  # pending, confirmed, rejected
     phone_last4 = Column(String(4))
     confirmed_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)

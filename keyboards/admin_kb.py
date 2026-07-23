@@ -2,18 +2,6 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
-def admin_main_keyboard() -> InlineKeyboardMarkup:
-    """Главное меню для админа (с кнопкой входа в админку)."""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="💳 Попробовать 3 дня бесплатно", callback_data="menu:trial")
-    builder.button(text="📊 Статус", callback_data="menu:status")
-    builder.button(text="🆘 Помощь / FAQ", callback_data="menu:help")
-    builder.button(text="🎁 Пригласить друга", callback_data="menu:invite")
-    builder.button(text="⚙️ Админка", callback_data="menu:admin")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
 def admin_keyboard() -> InlineKeyboardMarkup:
     """Админ-панель."""
     builder = InlineKeyboardBuilder()
@@ -22,6 +10,63 @@ def admin_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🖥 Сервер", callback_data="admin:server")
     builder.button(text="📢 Рассылка", callback_data="admin:broadcast")
     builder.button(text="🧹 Очистка истекших", callback_data="admin:cleanup")
-    builder.button(text="🔙 Выйти из админки", callback_data="admin:exit")
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def user_profile_keyboard(client_id: int, has_subscription: bool = False) -> InlineKeyboardMarkup:
+    """Клавиатура профиля пользователя для админа."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📅 Продлить подписку", callback_data=f"admin:extend:{client_id}")
+    builder.button(text="❌ Удалить подписку", callback_data=f"admin:delsub:{client_id}")
+    builder.button(text="🧹 Очистить истекшие", callback_data=f"admin:cleansub:{client_id}")
+    builder.button(text="🚫 Заблокировать", callback_data=f"admin:ban:{client_id}")
+    builder.button(text="✅ Разблокировать", callback_data=f"admin:unban:{client_id}")
+    builder.button(text="🔙 Назад к списку", callback_data="admin:clients")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def confirm_keyboard(action: str, client_id: int, extra: str = "") -> InlineKeyboardMarkup:
+    """Универсальная клавиатура подтверждения."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да", callback_data=f"admin:confirm:{action}:{client_id}:{extra}")
+    builder.button(text="❌ Нет", callback_data=f"admin:cancel:{action}:{client_id}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def confirm_extend_keyboard(client_id: int, days: int) -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения продления."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да", callback_data=f"admin:confirm_extend:{client_id}:{days}")
+    builder.button(text="❌ Нет", callback_data=f"admin:cancel_extend:{client_id}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def payment_confirm_keyboard(payment_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура для подтверждения платежа."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💰 Ввести сумму", callback_data=f"admin:payment_amount:{payment_id}")
+    builder.button(text="❌ Отклонить", callback_data=f"admin:payment_reject:{payment_id}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def payment_confirm_final_keyboard(payment_id: int, amount: int) -> InlineKeyboardMarkup:
+    """Клавиатура финального подтверждения платежа."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Подтвердить", callback_data=f"admin:payment_confirm:{payment_id}:{amount}")
+    builder.button(text="❌ Отмена", callback_data=f"admin:payment_cancel:{payment_id}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def payment_reject_keyboard(payment_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения отклонения платежа."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, отклонить", callback_data=f"admin:payment_reject_confirm:{payment_id}")
+    builder.button(text="❌ Нет, отмена", callback_data=f"admin:payment_cancel:{payment_id}")
+    builder.adjust(2)
     return builder.as_markup()
