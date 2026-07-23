@@ -179,12 +179,12 @@ async def trial_start(callback: types.CallbackQuery):
 
     async with async_session() as session:
         result = await session.execute(
-            select(Subscription)
+            select(func.count(Subscription.id))
             .where(Subscription.client_id == client.id)
             .where(Subscription.status == "active")
             .where(Subscription.expires_at >= date.today())
         )
-        if result.scalar_one_or_none():
+        if result.scalar() > 0:
             await callback.message.answer(
                 "У вас уже есть активная подписка.\n"
                 "Проверьте статус: кнопка «📊 Статус»"
@@ -542,6 +542,7 @@ async def payment_screenshot(message: types.Message):
 @router.callback_query(F.data == "admin:clients")
 async def list_clients(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.")
         return
     async with async_session() as session:
         result = await session.execute(
@@ -563,6 +564,7 @@ async def list_clients(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin:stats")
 async def show_stats(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.")
         return
     async with async_session() as session:
         total_clients = await session.scalar(select(func.count(Client.id)))
@@ -592,6 +594,7 @@ async def show_stats(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin:server")
 async def server_status(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.")
         return
     try:
         from services.xray_api import xray
@@ -608,6 +611,7 @@ async def server_status(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin:broadcast")
 async def broadcast_start(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.")
         return
     await callback.message.answer("Введите сообщение для рассылки всем клиентам.\nДля отмены: /cancel")
     await callback.answer()
@@ -616,6 +620,7 @@ async def broadcast_start(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin:cleanup")
 async def cleanup_subscriptions(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.")
         return
     async with async_session() as session:
         await session.execute(
@@ -629,6 +634,7 @@ async def cleanup_subscriptions(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin:exit")
 async def exit_admin(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.")
         return
     await callback.message.answer("Выход из админки.", reply_markup=admin_main_keyboard())
     await callback.answer()
