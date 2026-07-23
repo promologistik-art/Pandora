@@ -124,13 +124,14 @@ async def list_clients(callback: types.CallbackQuery):
             sub_text = "нет подписки"
             emoji = "❌"
         
+        # ID клиента — кликабельная ссылка на бота с параметром
         text += (
-            f"{emoji} <code>/user {c.id}</code> | @{c.username or 'нет'}\n"
+            f"{emoji} <a href=\"https://t.me/{config.BOT_USERNAME}?start=user_{c.id}\">ID {c.id}</a> | @{c.username or 'нет'}\n"
             f"   {c.first_name} | {sub_text}\n\n"
         )
     
     text += f"<i>Всего: {len(clients)} клиентов</i>\n"
-    text += "<i>Нажмите на /user [ID] для управления</i>"
+    text += "<i>Нажмите на ID для управления</i>"
     
     await callback.message.edit_text(text)
     await callback.answer()
@@ -156,6 +157,11 @@ async def manage_user(message: types.Message):
         await message.answer("❌ ID должен быть числом.")
         return
 
+    await show_user_profile(message, user_id)
+
+
+async def show_user_profile(message: types.Message, user_id: int):
+    """Показывает профиль пользователя."""
     async with async_session() as session:
         client = await session.get(Client, user_id)
         if not client:
@@ -168,17 +174,15 @@ async def manage_user(message: types.Message):
 
         subscriptions = await get_client_active_subscriptions(user_id)
         has_subscription = len(subscriptions) > 0
-        
-        status_text = "✅ активен"
-        
+
         text = (
             f"<b>👤 Клиент #{client.id}</b>\n"
             f"<b>Имя:</b> {client.first_name}\n"
             f"<b>Username:</b> @{client.username or 'нет'}\n"
-            f"<b>Статус:</b> {status_text}\n\n"
+            f"<b>Статус:</b> ✅ активен\n\n"
             f"<b>Активные подписки ({len(subscriptions)}):</b>\n"
         )
-        
+
         if subscriptions:
             for sub in subscriptions:
                 sub_type = "🆓 триал" if sub["is_trial"] else "✅ оплачено"
@@ -188,7 +192,7 @@ async def manage_user(message: types.Message):
                 )
         else:
             text += "  ❌ нет активных подписок"
-        
+
         await message.answer(
             text,
             reply_markup=user_profile_keyboard(user_id, has_subscription)
@@ -200,7 +204,7 @@ async def manage_user(message: types.Message):
 # ========================
 
 @router.callback_query(F.data.startswith("admin:user:"))
-async def show_user_profile(callback: types.CallbackQuery):
+async def show_user_profile_callback(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return

@@ -3,7 +3,6 @@ from datetime import date, timedelta, datetime
 
 from aiogram import Router, types, F
 from aiogram.filters import Command, CommandStart
-from aiogram.types import ReplyKeyboardRemove
 
 from sqlalchemy import select, func
 
@@ -19,10 +18,79 @@ from keyboards.client_kb import (
     tariff_keyboard, payment_keyboard, status_keyboard,
     help_keyboard, downloads_keyboard, referral_keyboard
 )
-from keyboards.admin_kb import payment_confirm_keyboard
+from keyboards.admin_kb import (
+    payment_confirm_keyboard, user_profile_keyboard
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+# ========================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ========================
+
+async def get_client_active_subscriptions(client_id: int) -> list:
+    """Возвращает список активных подписок клиента."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Subscription)
+            .where(Subscription.client_id == client_id)
+            .where(Subscription.status == "active")
+            .where(Subscription.expires_at >= date.today())
+            .order_by(Subscription.expires_at)
+        )
+        subs = result.scalars().all()
+        
+        return [
+            {
+                "id": sub.id,
+                "expires_at": sub.expires_at.strftime('%d.%m.%Y'),
+                "plan": sub.plan,
+                "is_trial": sub.is_trial,
+                "sub_link": sub.sub_link,
+            }
+            for sub in subs
+        ]
+
+
+async def show_user_profile_by_id(message: types.Message, user_id: int):
+    """Показывает профиль пользователя по ID."""
+    async with async_session() as session:
+        client = await session.get(Client, user_id)
+        if not client:
+            await message.answer("❌ Клиент не найден.")
+            return
+
+        if client.status == "banned":
+            await message.answer(f"🚫 Клиент #{user_id} заблокирован.")
+            return
+
+        subscriptions = await get_client_active_subscriptions(user_id)
+        has_subscription = len(subscriptions) > 0
+
+        text = (
+            f"<b>👤 Клиент #{client.id}</b>\n"
+            f"<b>Имя:</b> {client.first_name}\n"
+            f"<b>Username:</b> @{client.username or 'нет'}\n"
+            f"<b>Статус:</b> ✅ активен\n\n"
+            f"<b>Активные подписки ({len(subscriptions)}):</b>\n"
+        )
+
+        if subscriptions:
+            for sub in subscriptions:
+                sub_type = "🆓 триал" if sub["is_trial"] else "✅ оплачено"
+                text += (
+                    f"  • ID {sub['id']} | {sub_type}\n"
+                    f"    до {sub['expires_at']} | {sub['plan']}\n"
+                )
+        else:
+            text += "  ❌ нет активных подписок"
+
+        await message.answer(
+            text,
+            reply_markup=user_profile_keyboard(user_id, has_subscription)
+        )
 
 
 # ========================
@@ -31,6 +99,24 @@ router = Router()
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message):
+    args = message.text.split()
+    
+    # Проверяем, не пришла ли команда /start user_{id} (для админов)
+    if len(args) > 1 and args[1].startswith("user_"):
+        # Только админы могут управлять пользователями
+        if not is_admin(message.from_user.id):
+            await message.answer("❌ Недостаточно прав.")
+            return
+        
+        try:
+            user_id = int(args[1][5:])  # user_123 → 123
+        except ValueError:
+            await message.answer("❌ Неверный ID пользователя.")
+            return
+        
+        await show_user_profile_by_id(message, user_id)
+        return
+    
     # Проверяем, не забанен ли пользователь
     async with async_session() as session:
         result = await session.execute(
@@ -66,7 +152,6 @@ async def cmd_start(message: types.Message):
 
     # Обработка реферальной ссылки
     ref_arg = None
-    args = message.text.split()
     if len(args) > 1 and args[1].startswith("ref"):
         try:
             ref_id = int(args[1][3:])
