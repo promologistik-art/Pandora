@@ -1,11 +1,11 @@
 import logging
 from datetime import date, timedelta
+from typing import List, Dict, Any
 
 from aiogram import Router, types, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import ReplyKeyboardRemove
 
 from sqlalchemy import select, func, text
 
@@ -17,11 +17,11 @@ from services.client_service import (
     is_admin, get_free_sub_link
 )
 from keyboards.admin_kb import (
-    admin_keyboard, user_profile_keyboard, confirm_keyboard,
+    admin_keyboard, clients_list_keyboard, user_profile_keyboard,
+    subscription_list_keyboard, confirm_keyboard,
     confirm_extend_keyboard, payment_confirm_keyboard,
     payment_confirm_final_keyboard, payment_reject_keyboard
 )
-from keyboards.client_kb import main_keyboard, admin_main_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -35,6 +35,68 @@ class AdminStates(StatesGroup):
     waiting_extend_days = State()
     waiting_payment_amount = State()
     waiting_broadcast_text = State()
+
+
+# ========================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ========================
+
+def parse_callback_data(data: str, expected_parts: int):
+    """Безопасно разбирает callback.data на части."""
+    parts = data.split(":")
+    if len(parts) < expected_parts:
+        return None
+    return parts
+
+
+def get_subscription_status(sub: Subscription) -> str:
+    """Возвращает статус подписки для отображения."""
+    if sub.is_trial:
+        return "триал"
+    else:
+        return "оплачено"
+
+
+async def get_client_status_text(client_id: int) -> str:
+    """Возвращает текст статуса клиента для списка."""
+    async with async_session() as session:
+        client = await session.get(Client, client_id)
+        if not client:
+            return "❌ не найден"
+        
+        if client.status == "banned":
+            return "🚫 заблокирован"
+        
+        sub = await get_active_subscription(client_id)
+        if sub:
+            status = get_subscription_status(sub)
+            return f"{status} до {sub.expires_at.strftime('%d.%m')}"
+        else:
+            return "нет подписки"
+
+
+async def get_client_active_subscriptions(client_id: int) -> List[Dict[str, Any]]:
+    """Возвращает список активных подписок клиента."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Subscription)
+            .where(Subscription.client_id == client_id)
+            .where(Subscription.status == "active")
+            .where(Subscription.expires_at >= date.today())
+            .order_by(Subscription.expires_at)
+        )
+        subs = result.scalars().all()
+        
+        return [
+            {
+                "id": sub.id,
+                "expires_at": sub.expires_at.strftime('%d.%m.%Y'),
+                "plan": sub.plan,
+                "is_trial": sub.is_trial,
+                "sub_link": sub.sub_link,
+            }
+            for sub in subs
+        ]
 
 
 # ========================
@@ -54,98 +116,140 @@ async def cmd_admin(message: types.Message):
 
 
 # ========================
-# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ БЕЗОПАСНОГО РАЗБОРА callback.data
+# СПИСОК КЛИЕНТОВ (С ПАГИНАЦИЕЙ)
 # ========================
 
-def parse_callback_data(data: str, expected_parts: int):
-    """Безопасно разбирает callback.data на части."""
-    parts = data.split(":")
-    if len(parts) < expected_parts:
-        return None
-    return parts
+ITEMS_PER_PAGE = 10
 
-
-# ========================
-# СПИСОК КЛИЕНТОВ
-# ========================
-
-@router.callback_query(F.data == "admin:clients")
+@router.callback_query(F.data.startswith("admin:clients"))
 async def list_clients(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
+    # Определяем страницу
+    parts = parse_callback_data(callback.data, 3)
+    if parts:
+        page = int(parts[2]) if parts[2].isdigit() else 0
+    else:
+        page = 0
+    
     async with async_session() as session:
+        # Считаем общее количество активных клиентов
+        total = await session.scalar(
+            select(func.count(Client.id)).where(Client.status == "active")
+        )
+        
+        # Получаем клиентов для текущей страницы
         result = await session.execute(
             select(Client)
             .where(Client.status == "active")
-            .order_by(Client.created_at.desc())
-            .limit(20)
+            .order_by(Client.id)
+            .offset(page * ITEMS_PER_PAGE)
+            .limit(ITEMS_PER_PAGE)
         )
         clients = result.scalars().all()
-
+    
     if not clients:
         await callback.message.answer("📭 Активных клиентов пока нет.")
-    else:
-        text = "<b>👥 Последние 20 клиентов:</b>\n\n"
-        for c in clients:
-            sub = await get_active_subscription(c.id)
-            sub_text = f"до {sub.expires_at.strftime('%d.%m')}" if sub else "нет подписки"
-            text += (
-                f"<b>ID:</b> <code>{c.id}</code> | @{c.username or 'нет'}\n"
-                f"  {c.first_name} | {sub_text}\n\n"
-            )
-        text += "Нажмите на кнопку ниже для управления:"
-        await callback.message.answer(text)
-
-        for c in clients[:5]:
-            sub = await get_active_subscription(c.id)
-            status_text = "✅" if sub else "❌"
-            await callback.message.answer(
-                f"{status_text} <b>ID {c.id}</b> — @{c.username or c.first_name}",
-                reply_markup=user_profile_keyboard(c.id, bool(sub))
-            )
-
+        await callback.answer()
+        return
+    
+    # Формируем список клиентов для клавиатуры
+    clients_data = []
+    for c in clients:
+        sub = await get_active_subscription(c.id)
+        if sub:
+            sub_status = "триал" if sub.is_trial else "оплачено"
+            sub_text = f"{sub_status} до {sub.expires_at.strftime('%d.%m')}"
+        else:
+            sub_text = "нет подписки"
+        
+        clients_data.append({
+            "id": c.id,
+            "username": c.username or c.first_name,
+            "first_name": c.first_name,
+            "status": c.status,
+            "sub_status": sub_status if sub else None,
+            "sub_text": sub_text,
+        })
+    
+    # Формируем текст списка
+    text = f"<b>👥 Активные клиенты</b> (стр. {page + 1})\n\n"
+    for c in clients_data:
+        # Определяем эмодзи статуса
+        if c["sub_status"] == "оплачено":
+            emoji = "✅"
+        elif c["sub_status"] == "триал":
+            emoji = "🆓"
+        else:
+            emoji = "❌"
+        
+        text += f"{emoji} <b>ID {c['id']}</b> | @{c['username']}\n"
+        text += f"   {c['first_name']} | {c['sub_text']}\n\n"
+    
+    text += f"<i>Всего: {total or 0} клиентов</i>\n"
+    text += f"<i>Страница {page + 1} из {((total or 0) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE}</i>"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=clients_list_keyboard(clients_data, page)
+    )
     await callback.answer()
 
 
 # ========================
-# ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ (через /user)
+# ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ
 # ========================
 
-@router.message(Command("user"))
-async def manage_user(message: types.Message):
-    if not is_admin(message.from_user.id):
+@router.callback_query(F.data.startswith("admin:user:"))
+async def show_user_profile(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
         return
-
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("📝 Использование: /user [ID клиента]")
+    
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
         return
-
-    user_id = int(args[1])
-
+    
+    client_id = int(parts[2])
+    
     async with async_session() as session:
-        client = await session.get(Client, user_id)
+        client = await session.get(Client, client_id)
         if not client:
-            await message.answer("❌ Клиент не найден.")
+            await callback.message.answer("❌ Клиент не найден.")
+            await callback.answer()
             return
-
-        if client.status == "banned":
-            await message.answer(f"🚫 Клиент #{user_id} заблокирован.")
-            return
-
-        sub = await get_active_subscription(client.id)
-        sub_text = f"до {sub.expires_at.strftime('%d.%m.%Y')}" if sub else "нет"
-
+        
+        # Получаем все активные подписки
+        subscriptions = await get_client_active_subscriptions(client_id)
+        
+        status_text = "🚫 заблокирован" if client.status == "banned" else "✅ активен"
+        
         text = (
             f"<b>👤 Клиент #{client.id}</b>\n"
             f"<b>Имя:</b> {client.first_name}\n"
             f"<b>Username:</b> @{client.username or 'нет'}\n"
-            f"<b>Подписка:</b> {sub_text}\n\n"
-            f"<b>Выберите действие:</b>"
+            f"<b>Статус:</b> {status_text}\n\n"
+            f"<b>Активные подписки ({len(subscriptions)}):</b>\n"
         )
-    await message.answer(text, reply_markup=user_profile_keyboard(user_id, bool(sub)))
+        
+        if subscriptions:
+            for sub in subscriptions:
+                sub_type = "🆓 триал" if sub["is_trial"] else "✅ оплачено"
+                text += (
+                    f"  • ID {sub['id']} | {sub_type}\n"
+                    f"    до {sub['expires_at']} | {sub['plan']}\n"
+                )
+        else:
+            text += "  ❌ нет активных подписок"
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=user_profile_keyboard(client_id, bool(subscriptions), subscriptions)
+        )
+        await callback.answer()
 
 
 # ========================
@@ -229,10 +333,12 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             await callback.answer()
             return
 
+        # Продлеваем существующую подписку
         sub = await get_active_subscription(client.id)
         if sub:
             sub.expires_at = sub.expires_at + timedelta(days=days)
         else:
+            # Если нет активной подписки — создаём новую
             sub_link = await get_free_sub_link(session)
             sub = Subscription(
                 client_id=client.id,
@@ -268,11 +374,11 @@ async def extend_subscription_cancel(callback: types.CallbackQuery):
 
 
 # ========================
-# УДАЛИТЬ ПОДПИСКУ
+# УДАЛИТЬ ПОДПИСКУ (СПИСОК)
 # ========================
 
-@router.callback_query(F.data.startswith("admin:delsub:"))
-async def delete_subscription(callback: types.CallbackQuery):
+@router.callback_query(F.data.startswith("admin:delsub_list:"))
+async def delete_subscription_list(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
@@ -291,21 +397,26 @@ async def delete_subscription(callback: types.CallbackQuery):
             await callback.answer()
             return
 
-        sub = await get_active_subscription(client.id)
-        if not sub:
-            await callback.message.answer(f"❌ У @{client.username or client.first_name} нет активной подписки.")
+        subscriptions = await get_client_active_subscriptions(client_id)
+        
+        if not subscriptions:
+            await callback.message.answer(f"❌ У @{client.username or client.first_name} нет активных подписок.")
             await callback.answer()
             return
 
-        await callback.message.answer(
-            f"❌ Удаляем подписку у @{client.username or client.first_name}?\n\n"
-            f"Подписка действует до: {sub.expires_at.strftime('%d.%m.%Y')}",
-            reply_markup=confirm_keyboard("delsub", client_id)
+        text = (
+            f"<b>Выберите подписку для удаления:</b>\n\n"
+            f"Клиент: @{client.username or client.first_name}\n"
+        )
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=subscription_list_keyboard(subscriptions, client_id)
         )
         await callback.answer()
 
 
-@router.callback_query(F.data.startswith("admin:confirm:delsub:"))
+@router.callback_query(F.data.startswith("admin:delsub_confirm:"))
 async def delete_subscription_confirm(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
@@ -316,38 +427,80 @@ async def delete_subscription_confirm(callback: types.CallbackQuery):
         await callback.answer("Ошибка формата данных")
         return
 
-    client_id = int(parts[3])
+    client_id = int(parts[2])
+    sub_id = int(parts[3])
 
     async with async_session() as session:
+        sub = await session.get(Subscription, sub_id)
+        if not sub:
+            await callback.message.answer("❌ Подписка не найдена.")
+            await callback.answer()
+            return
+
         client = await session.get(Client, client_id)
         if not client:
             await callback.message.answer("❌ Клиент не найден.")
             await callback.answer()
             return
 
-        sub = await get_active_subscription(client.id)
-        if sub:
-            sub.status = "cancelled"
-            await session.commit()
+        await callback.message.answer(
+            f"❌ Удаляем подписку ID {sub_id} у @{client.username or client.first_name}?\n\n"
+            f"Действует до: {sub.expires_at.strftime('%d.%m.%Y')}\n"
+            f"Тип: {'триал' if sub.is_trial else 'оплачено'}",
+            reply_markup=confirm_keyboard("delsub", client_id, str(sub_id))
+        )
+        await callback.answer()
 
-            event = EventLog(
-                client_id=client.id,
-                event_type="subscription_deleted",
-                description=f"Подписка удалена админом"
+
+@router.callback_query(F.data.startswith("admin:confirm:delsub:"))
+async def delete_subscription_final(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    parts = parse_callback_data(callback.data, 5)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    client_id = int(parts[3])
+    sub_id = int(parts[4])
+
+    async with async_session() as session:
+        sub = await session.get(Subscription, sub_id)
+        if not sub:
+            await callback.message.answer("❌ Подписка не найдена.")
+            await callback.answer()
+            return
+
+        client = await session.get(Client, client_id)
+        if not client:
+            await callback.message.answer("❌ Клиент не найден.")
+            await callback.answer()
+            return
+
+        sub.status = "cancelled"
+        await session.commit()
+
+        event = EventLog(
+            client_id=client.id,
+            event_type="subscription_deleted",
+            description=f"Подписка ID {sub_id} удалена админом"
+        )
+        session.add(event)
+        await session.commit()
+
+        # Уведомляем клиента
+        try:
+            await callback.bot.send_message(
+                client.telegram_id,
+                f"❌ <b>Ваша подписка удалена администратором.</b>\n\n"
+                f"Свяжитесь с поддержкой: @{config.SUPPORT_BOT_USERNAME}"
             )
-            session.add(event)
-            await session.commit()
+        except Exception as e:
+            logger.error(f"Не удалось уведомить клиента {client.id}: {e}")
 
-            try:
-                await callback.bot.send_message(
-                    client.telegram_id,
-                    f"❌ <b>Ваша подписка удалена администратором.</b>\n\n"
-                    f"Свяжитесь с поддержкой: @{config.SUPPORT_BOT_USERNAME}"
-                )
-            except Exception as e:
-                logger.error(f"Не удалось уведомить клиента {client.id}: {e}")
-
-    await callback.message.edit_text(f"✅ Подписка @{client.username or client.first_name} удалена.")
+    await callback.message.edit_text(f"✅ Подписка ID {sub_id} у @{client.username or client.first_name} удалена.")
     await callback.answer()
 
 
@@ -850,6 +1003,7 @@ async def payment_confirm(callback: types.CallbackQuery):
 
         tariff = config.TARIFFS.get(tariff_key, config.TARIFFS["1month"])
 
+        # Проверяем наличие активной подписки — если есть, продлеваем её
         existing_sub = await get_active_subscription(client.id)
         if existing_sub:
             existing_sub.expires_at = existing_sub.expires_at + timedelta(days=tariff["days"])
