@@ -30,7 +30,7 @@ def admin_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="📊 Статистика", callback_data="admin:stats")
     builder.button(text="🖥 Сервер", callback_data="admin:server")
     builder.button(text="📢 Рассылка", callback_data="admin:broadcast")
-    builder.button(text="🧹 Очистка подписок", callback_data="admin:cleanup")
+    builder.button(text="🧹 Очистка истекших", callback_data="admin:cleanup")
     builder.button(text="🔙 Выйти из админки", callback_data="admin:exit")
     builder.adjust(1)
     return builder.as_markup()
