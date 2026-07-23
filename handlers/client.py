@@ -101,9 +101,10 @@ async def show_user_profile_by_id(message: types.Message, user_id: int):
 async def cmd_start(message: types.Message):
     args = message.text.split()
     
-    # Проверяем, не пришла ли команда /start user_{id} (для админов)
+    # ========================================
+    # 1. ПРОВЕРКА: /start user_{id} (для админов)
+    # ========================================
     if len(args) > 1 and args[1].startswith("user_"):
-        # Только админы могут управлять пользователями
         if not is_admin(message.from_user.id):
             await message.answer("❌ Недостаточно прав.")
             return
@@ -115,9 +116,11 @@ async def cmd_start(message: types.Message):
             return
         
         await show_user_profile_by_id(message, user_id)
-        return
+        return  # <-- ВАЖНО: выходим, чтобы не показывать приветствие
     
-    # Проверяем, не забанен ли пользователь
+    # ========================================
+    # 2. ПРОВЕРКА: не забанен ли пользователь
+    # ========================================
     async with async_session() as session:
         result = await session.execute(
             select(Client).where(Client.telegram_id == message.from_user.id)
@@ -130,6 +133,9 @@ async def cmd_start(message: types.Message):
             )
             return
 
+    # ========================================
+    # 3. ОБЫЧНЫЙ СТАРТ
+    # ========================================
     client = await get_or_create_client(
         message.from_user.id,
         message.from_user.username,
