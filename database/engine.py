@@ -2,7 +2,11 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import text
 from config import config
+import logging
 
+from database.migrations import Migration
+
+logger = logging.getLogger(__name__)
 
 db_url = config.DATABASE_URL
 if db_url and db_url.startswith("postgresql://"):
@@ -22,9 +26,12 @@ async def get_session() -> AsyncSession:
 
 
 async def init_db():
+    """Инициализация базы данных с автоматическим добавлением колонок."""
     async with engine.begin() as conn:
+        # Создаём таблицы, если их нет (существующие не трогаем)
         await conn.run_sync(Base.metadata.create_all)
-        try:
-            await conn.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS sub_link VARCHAR(255)"))
-        except Exception:
-            pass
+        logger.info("Таблицы созданы (если отсутствовали)")
+        
+        # Применяем миграции (добавляем недостающие колонки)
+        await Migration.apply_all(conn)
+        logger.info("База данных инициализирована")
