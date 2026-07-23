@@ -44,9 +44,6 @@ async def cmd_start(message: types.Message):
             )
             return
 
-    # Сразу убираем старую Reply-клавиатуру
-    await message.answer("", reply_markup=ReplyKeyboardRemove())
-
     client = await get_or_create_client(
         message.from_user.id,
         message.from_user.username,
