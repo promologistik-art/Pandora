@@ -3,6 +3,7 @@ from datetime import date, timedelta, datetime
 
 from aiogram import Router, types, F
 from aiogram.filters import Command, CommandStart
+from aiogram.types import ReplyKeyboardRemove
 
 from sqlalchemy import select, func
 
@@ -30,6 +31,12 @@ router = Router()
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message):
+    # ⚠️ ВАЖНО: Сначала убираем старую Reply-клавиатуру
+    await message.answer(
+        "⏳ Обновляем меню...",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
     client = await get_or_create_client(
         message.from_user.id,
         message.from_user.username,
