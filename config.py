@@ -9,6 +9,7 @@ load_dotenv()
 class Config:
     # === Основной бот ===
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+    BOT_USERNAME: str = os.getenv("BOT_USERNAME", "PyxisPandorae_bot")
 
     # === Админы ===
     ADMIN_IDS: list[int] = field(default_factory=lambda: [
@@ -20,8 +21,9 @@ class Config:
 
     # === 3x-ui API ===
     XUI_HOST: str = os.getenv("XUI_HOST", "")
+    XUI_USERNAME: str = os.getenv("XUI_USERNAME", "")
+    XUI_PASSWORD: str = os.getenv("XUI_PASSWORD", "")
     XUI_INBOUND_ID: int = int(os.getenv("XUI_INBOUND_ID", "1"))
-    XUI_API_TOKEN: str = os.getenv("XUI_API_TOKEN", "")
 
     # === СБП ===
     SBP_PHONE: str = os.getenv("SBP_PHONE", "+79991234567")
@@ -37,7 +39,7 @@ class Config:
     ])
 
     # === Тарифы ===
-    TRIAL_DAYS: int = 3
+    TRIAL_DAYS: int = int(os.getenv("TRIAL_DAYS", "3"))
 
     TARIFFS: dict = field(default_factory=lambda: {
         "1month":  {"name": "1 месяц",   "price": 300,  "days": 30},
@@ -46,7 +48,12 @@ class Config:
         "12months":{"name": "12 месяцев","price": 2400, "days": 365},
     })
 
-    REFERRAL_BONUS_DAYS: int = 7
+    REFERRAL_BONUS_DAYS: int = int(os.getenv("REFERRAL_BONUS_DAYS", "7"))
 
 
 config = Config()
+
+# Проверка SUB_LINKS при старте
+if not config.SUB_LINKS:
+    import logging
+    logging.warning("⚠️ SUB_LINKS не заполнен! Триал и продление не будут работать!")
