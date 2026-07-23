@@ -54,6 +54,18 @@ async def cmd_admin(message: types.Message):
 
 
 # ========================
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ БЕЗОПАСНОГО РАЗБОРА callback.data
+# ========================
+
+def parse_callback_data(data: str, expected_parts: int):
+    """Безопасно разбирает callback.data на части."""
+    parts = data.split(":")
+    if len(parts) < expected_parts:
+        return None
+    return parts
+
+
+# ========================
 # СПИСОК КЛИЕНТОВ
 # ========================
 
@@ -86,8 +98,7 @@ async def list_clients(callback: types.CallbackQuery):
         text += "Нажмите на кнопку ниже для управления:"
         await callback.message.answer(text)
 
-        # Показываем кнопки для каждого клиента
-        for c in clients[:5]:  # Ограничим 5 кнопками, чтобы не заспамить
+        for c in clients[:5]:
             sub = await get_active_subscription(c.id)
             status_text = "✅" if sub else "❌"
             await callback.message.answer(
@@ -147,7 +158,12 @@ async def extend_subscription_start(callback: types.CallbackQuery, state: FSMCon
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    client_id = int(callback.data.split(":")[2])
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+    
+    client_id = int(parts[2])
 
     async with async_session() as session:
         client = await session.get(Client, client_id)
@@ -198,9 +214,13 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    _, _, client_id, days = callback.data.split(":")
-    client_id = int(client_id)
-    days = int(days)
+    parts = parse_callback_data(callback.data, 4)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    client_id = int(parts[2])
+    days = int(parts[3])
 
     async with async_session() as session:
         client = await session.get(Client, client_id)
@@ -257,7 +277,12 @@ async def delete_subscription(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    client_id = int(callback.data.split(":")[2])
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    client_id = int(parts[2])
 
     async with async_session() as session:
         client = await session.get(Client, client_id)
@@ -286,8 +311,12 @@ async def delete_subscription_confirm(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    _, _, _, client_id = callback.data.split(":")
-    client_id = int(client_id)
+    parts = parse_callback_data(callback.data, 4)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    client_id = int(parts[3])
 
     async with async_session() as session:
         client = await session.get(Client, client_id)
@@ -309,7 +338,6 @@ async def delete_subscription_confirm(callback: types.CallbackQuery):
             session.add(event)
             await session.commit()
 
-            # Уведомляем клиента
             try:
                 await callback.bot.send_message(
                     client.telegram_id,
@@ -333,7 +361,12 @@ async def clean_subscriptions(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    client_id = int(callback.data.split(":")[2])
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    client_id = int(parts[2])
 
     async with async_session() as session:
         client = await session.get(Client, client_id)
@@ -355,8 +388,12 @@ async def clean_subscriptions_confirm(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    _, _, _, client_id = callback.data.split(":")
-    client_id = int(client_id)
+    parts = parse_callback_data(callback.data, 4)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    client_id = int(parts[3])
 
     async with async_session() as session:
         client = await session.get(Client, client_id)
@@ -393,7 +430,12 @@ async def ban_user(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    client_id = int(callback.data.split(":")[2])
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    client_id = int(parts[2])
 
     async with async_session() as session:
         client = await session.get(Client, client_id)
@@ -422,8 +464,12 @@ async def ban_user_confirm(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    _, _, _, client_id = callback.data.split(":")
-    client_id = int(client_id)
+    parts = parse_callback_data(callback.data, 4)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    client_id = int(parts[3])
 
     async with async_session() as session:
         client = await session.get(Client, client_id)
@@ -434,7 +480,6 @@ async def ban_user_confirm(callback: types.CallbackQuery):
 
         client.status = "banned"
 
-        # Блокируем все подписки
         await session.execute(
             text("UPDATE subscriptions SET status = 'banned' WHERE client_id = :uid AND status = 'active'"),
             {"uid": client_id}
@@ -449,7 +494,6 @@ async def ban_user_confirm(callback: types.CallbackQuery):
         session.add(event)
         await session.commit()
 
-        # Уведомляем клиента
         try:
             await callback.bot.send_message(
                 client.telegram_id,
@@ -473,7 +517,12 @@ async def unban_user(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    client_id = int(callback.data.split(":")[2])
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    client_id = int(parts[2])
 
     async with async_session() as session:
         client = await session.get(Client, client_id)
@@ -500,8 +549,12 @@ async def unban_user_confirm(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    _, _, _, client_id = callback.data.split(":")
-    client_id = int(client_id)
+    parts = parse_callback_data(callback.data, 4)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    client_id = int(parts[3])
 
     async with async_session() as session:
         client = await session.get(Client, client_id)
@@ -521,7 +574,6 @@ async def unban_user_confirm(callback: types.CallbackQuery):
         session.add(event)
         await session.commit()
 
-        # Уведомляем клиента
         try:
             await callback.bot.send_message(
                 client.telegram_id,
@@ -705,7 +757,12 @@ async def payment_amount_start(callback: types.CallbackQuery, state: FSMContext)
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    payment_id = int(callback.data.split(":")[2])
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    payment_id = int(parts[2])
 
     async with async_session() as session:
         payment = await session.get(Payment, payment_id)
@@ -760,9 +817,13 @@ async def payment_confirm(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    _, _, payment_id, amount = callback.data.split(":")
-    payment_id = int(payment_id)
-    amount = int(amount)
+    parts = parse_callback_data(callback.data, 4)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    payment_id = int(parts[2])
+    amount = int(parts[3])
 
     async with async_session() as session:
         payment = await session.get(Payment, payment_id)
@@ -781,7 +842,6 @@ async def payment_confirm(callback: types.CallbackQuery):
             await callback.answer()
             return
 
-        # Определяем тариф по сумме
         tariff_key = "1month"
         for key, t in config.TARIFFS.items():
             if t["price"] == amount:
@@ -790,7 +850,6 @@ async def payment_confirm(callback: types.CallbackQuery):
 
         tariff = config.TARIFFS.get(tariff_key, config.TARIFFS["1month"])
 
-        # Проверяем наличие активной подписки
         existing_sub = await get_active_subscription(client.id)
         if existing_sub:
             existing_sub.expires_at = existing_sub.expires_at + timedelta(days=tariff["days"])
@@ -815,7 +874,6 @@ async def payment_confirm(callback: types.CallbackQuery):
         session.add(event)
         await session.commit()
 
-    # Уведомляем клиента
     try:
         await callback.bot.send_message(
             client.telegram_id,
@@ -839,7 +897,12 @@ async def payment_reject_start(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    payment_id = int(callback.data.split(":")[2])
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    payment_id = int(parts[2])
 
     async with async_session() as session:
         payment = await session.get(Payment, payment_id)
@@ -867,7 +930,12 @@ async def payment_reject_confirm(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    payment_id = int(callback.data.split(":")[2])
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    payment_id = int(parts[2])
 
     async with async_session() as session:
         payment = await session.get(Payment, payment_id)
@@ -886,7 +954,6 @@ async def payment_reject_confirm(callback: types.CallbackQuery):
 
         await session.commit()
 
-        # Уведомляем клиента
         try:
             await callback.bot.send_message(
                 client.telegram_id,
