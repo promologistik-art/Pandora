@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from typing import List, Dict, Any
 
 from aiogram import Router, types, F
-from aiogram.filters import Command, StateFilter
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -17,7 +17,7 @@ from services.client_service import (
     is_admin, get_free_sub_link
 )
 from keyboards.admin_kb import (
-    admin_keyboard, clients_list_keyboard, user_profile_keyboard,
+    admin_keyboard, user_profile_keyboard,
     subscription_list_keyboard, confirm_keyboard,
     confirm_extend_keyboard, payment_confirm_keyboard,
     payment_confirm_final_keyboard, payment_reject_keyboard
@@ -47,32 +47,6 @@ def parse_callback_data(data: str, expected_parts: int):
     if len(parts) < expected_parts:
         return None
     return parts
-
-
-def get_subscription_status(sub: Subscription) -> str:
-    """Возвращает статус подписки для отображения."""
-    if sub.is_trial:
-        return "триал"
-    else:
-        return "оплачено"
-
-
-async def get_client_status_text(client_id: int) -> str:
-    """Возвращает текст статуса клиента для списка."""
-    async with async_session() as session:
-        client = await session.get(Client, client_id)
-        if not client:
-            return "❌ не найден"
-        
-        if client.status == "banned":
-            return "🚫 заблокирован"
-        
-        sub = await get_active_subscription(client_id)
-        if sub:
-            status = get_subscription_status(sub)
-            return f"{status} до {sub.expires_at.strftime('%d.%m')}"
-        else:
-            return "нет подписки"
 
 
 async def get_client_active_subscriptions(client_id: int) -> List[Dict[str, Any]]:
@@ -116,37 +90,20 @@ async def cmd_admin(message: types.Message):
 
 
 # ========================
-# СПИСОК КЛИЕНТОВ (С ПАГИНАЦИЕЙ)
+# СПИСОК КЛИЕНТОВ
 # ========================
 
-ITEMS_PER_PAGE = 10
-
-@router.callback_query(F.data.startswith("admin:clients"))
+@router.callback_query(F.data == "admin:clients")
 async def list_clients(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    # Определяем страницу
-    parts = parse_callback_data(callback.data, 3)
-    if parts:
-        page = int(parts[2]) if parts[2].isdigit() else 0
-    else:
-        page = 0
-    
     async with async_session() as session:
-        # Считаем общее количество активных клиентов
-        total = await session.scalar(
-            select(func.count(Client.id)).where(Client.status == "active")
-        )
-        
-        # Получаем клиентов для текущей страницы
         result = await session.execute(
             select(Client)
             .where(Client.status == "active")
             .order_by(Client.id)
-            .offset(page * ITEMS_PER_PAGE)
-            .limit(ITEMS_PER_PAGE)
         )
         clients = result.scalars().all()
     
@@ -155,51 +112,91 @@ async def list_clients(callback: types.CallbackQuery):
         await callback.answer()
         return
     
-    # Формируем список клиентов для клавиатуры
-    clients_data = []
+    text = "<b>👥 Активные клиенты</b>\n\n"
+    
     for c in clients:
         sub = await get_active_subscription(c.id)
         if sub:
             sub_status = "триал" if sub.is_trial else "оплачено"
             sub_text = f"{sub_status} до {sub.expires_at.strftime('%d.%m')}"
+            emoji = "🆓" if sub.is_trial else "✅"
         else:
             sub_text = "нет подписки"
-        
-        clients_data.append({
-            "id": c.id,
-            "username": c.username or c.first_name,
-            "first_name": c.first_name,
-            "status": c.status,
-            "sub_status": sub_status if sub else None,
-            "sub_text": sub_text,
-        })
-    
-    # Формируем текст списка
-    text = f"<b>👥 Активные клиенты</b> (стр. {page + 1})\n\n"
-    for c in clients_data:
-        # Определяем эмодзи статуса
-        if c["sub_status"] == "оплачено":
-            emoji = "✅"
-        elif c["sub_status"] == "триал":
-            emoji = "🆓"
-        else:
             emoji = "❌"
         
-        text += f"{emoji} <b>ID {c['id']}</b> | @{c['username']}\n"
-        text += f"   {c['first_name']} | {c['sub_text']}\n\n"
+        text += (
+            f"{emoji} <code>/user {c.id}</code> | @{c.username or 'нет'}\n"
+            f"   {c.first_name} | {sub_text}\n\n"
+        )
     
-    text += f"<i>Всего: {total or 0} клиентов</i>\n"
-    text += f"<i>Страница {page + 1} из {((total or 0) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE}</i>"
+    text += f"<i>Всего: {len(clients)} клиентов</i>\n"
+    text += "<i>Нажмите на /user [ID] для управления</i>"
     
-    await callback.message.edit_text(
-        text,
-        reply_markup=clients_list_keyboard(clients_data, page)
-    )
+    await callback.message.edit_text(text)
     await callback.answer()
 
 
 # ========================
-# ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ
+# ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ (через /user)
+# ========================
+
+@router.message(Command("user"))
+async def manage_user(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("📝 Использование: /user [ID клиента]")
+        return
+
+    try:
+        user_id = int(args[1])
+    except ValueError:
+        await message.answer("❌ ID должен быть числом.")
+        return
+
+    async with async_session() as session:
+        client = await session.get(Client, user_id)
+        if not client:
+            await message.answer("❌ Клиент не найден.")
+            return
+
+        if client.status == "banned":
+            await message.answer(f"🚫 Клиент #{user_id} заблокирован.")
+            return
+
+        subscriptions = await get_client_active_subscriptions(user_id)
+        has_subscription = len(subscriptions) > 0
+        
+        status_text = "✅ активен"
+        
+        text = (
+            f"<b>👤 Клиент #{client.id}</b>\n"
+            f"<b>Имя:</b> {client.first_name}\n"
+            f"<b>Username:</b> @{client.username or 'нет'}\n"
+            f"<b>Статус:</b> {status_text}\n\n"
+            f"<b>Активные подписки ({len(subscriptions)}):</b>\n"
+        )
+        
+        if subscriptions:
+            for sub in subscriptions:
+                sub_type = "🆓 триал" if sub["is_trial"] else "✅ оплачено"
+                text += (
+                    f"  • ID {sub['id']} | {sub_type}\n"
+                    f"    до {sub['expires_at']} | {sub['plan']}\n"
+                )
+        else:
+            text += "  ❌ нет активных подписок"
+        
+        await message.answer(
+            text,
+            reply_markup=user_profile_keyboard(user_id, has_subscription)
+        )
+
+
+# ========================
+# ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ (из callback)
 # ========================
 
 @router.callback_query(F.data.startswith("admin:user:"))
@@ -222,8 +219,8 @@ async def show_user_profile(callback: types.CallbackQuery):
             await callback.answer()
             return
         
-        # Получаем все активные подписки
         subscriptions = await get_client_active_subscriptions(client_id)
+        has_subscription = len(subscriptions) > 0
         
         status_text = "🚫 заблокирован" if client.status == "banned" else "✅ активен"
         
@@ -247,7 +244,7 @@ async def show_user_profile(callback: types.CallbackQuery):
         
         await callback.message.edit_text(
             text,
-            reply_markup=user_profile_keyboard(client_id, bool(subscriptions), subscriptions)
+            reply_markup=user_profile_keyboard(client_id, has_subscription)
         )
         await callback.answer()
 
@@ -333,12 +330,10 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             await callback.answer()
             return
 
-        # Продлеваем существующую подписку
         sub = await get_active_subscription(client.id)
         if sub:
             sub.expires_at = sub.expires_at + timedelta(days=days)
         else:
-            # Если нет активной подписки — создаём новую
             sub_link = await get_free_sub_link(session)
             sub = Subscription(
                 client_id=client.id,
@@ -443,10 +438,12 @@ async def delete_subscription_confirm(callback: types.CallbackQuery):
             await callback.answer()
             return
 
+        sub_type = "триал" if sub.is_trial else "оплачено"
+
         await callback.message.answer(
             f"❌ Удаляем подписку ID {sub_id} у @{client.username or client.first_name}?\n\n"
             f"Действует до: {sub.expires_at.strftime('%d.%m.%Y')}\n"
-            f"Тип: {'триал' if sub.is_trial else 'оплачено'}",
+            f"Тип: {sub_type}",
             reply_markup=confirm_keyboard("delsub", client_id, str(sub_id))
         )
         await callback.answer()
@@ -490,7 +487,6 @@ async def delete_subscription_final(callback: types.CallbackQuery):
         session.add(event)
         await session.commit()
 
-        # Уведомляем клиента
         try:
             await callback.bot.send_message(
                 client.telegram_id,
@@ -1003,7 +999,6 @@ async def payment_confirm(callback: types.CallbackQuery):
 
         tariff = config.TARIFFS.get(tariff_key, config.TARIFFS["1month"])
 
-        # Проверяем наличие активной подписки — если есть, продлеваем её
         existing_sub = await get_active_subscription(client.id)
         if existing_sub:
             existing_sub.expires_at = existing_sub.expires_at + timedelta(days=tariff["days"])

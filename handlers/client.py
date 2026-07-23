@@ -44,7 +44,7 @@ async def cmd_start(message: types.Message):
             return
 
     # Сразу убираем старую Reply-клавиатуру
-    await message.answer("⏳ Обновляем меню...", reply_markup=ReplyKeyboardRemove())
+    await message.answer("", reply_markup=ReplyKeyboardRemove())
 
     client = await get_or_create_client(
         message.from_user.id,
@@ -93,7 +93,6 @@ async def cmd_start(message: types.Message):
         f"{config.VK_PAGE}"
     )
 
-    # Для админов показываем отдельное меню с кнопкой "Админка"
     if is_admin(message.from_user.id):
         await message.answer(welcome, reply_markup=admin_main_keyboard())
     else:
@@ -112,7 +111,6 @@ async def trial_start(callback: types.CallbackQuery):
         callback.from_user.first_name
     )
 
-    # Проверяем, не забанен ли пользователь
     if client.status == "banned":
         await callback.message.answer(
             "🚫 <b>Ваш доступ заблокирован.</b>\n\n"
@@ -122,7 +120,6 @@ async def trial_start(callback: types.CallbackQuery):
         return
 
     async with async_session() as session:
-        # Проверяем, есть ли уже активная подписка
         result = await session.execute(
             select(func.count(Subscription.id))
             .where(Subscription.client_id == client.id)
@@ -137,7 +134,6 @@ async def trial_start(callback: types.CallbackQuery):
             await callback.answer()
             return
 
-        # Ищем свободную ссылку
         sub_link = await get_free_sub_link(session)
         if not sub_link:
             await callback.message.answer(
