@@ -34,7 +34,6 @@ router = Router()
 
 class AdminStates(StatesGroup):
     waiting_extend_days = State()
-    waiting_payment_amount = State()
     waiting_broadcast_text = State()
 
 
@@ -1345,74 +1344,12 @@ async def cleanup_subscriptions(callback: types.CallbackQuery):
 
 
 # ========================
-# ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА (С КНОПКАМИ)
+# ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА (С КНОПКАМИ СУММ)
 # ========================
-
-@router.callback_query(F.data.startswith("admin:payment_confirm:"))
-async def payment_confirm_start(callback: types.CallbackQuery, state: FSMContext):
-    """Начало подтверждения платежа — запрос суммы."""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Недостаточно прав.", show_alert=True)
-        return
-
-    parts = parse_callback_data(callback.data, 3)
-    if not parts:
-        await callback.answer("Ошибка формата данных")
-        return
-
-    payment_id = int(parts[2])
-
-    async with async_session() as session:
-        payment = await session.get(Payment, payment_id)
-        if not payment:
-            await callback.message.answer("❌ Платёж не найден.")
-            await callback.answer()
-            return
-
-        client = await session.get(Client, payment.client_id)
-        if not client:
-            await callback.message.answer("❌ Клиент не найден.")
-            await callback.answer()
-            return
-
-        await state.update_data(payment_id=payment_id, client_id=client.id, username=client.username or client.first_name)
-        await callback.message.answer(
-            f"💰 Введите сумму платежа для @{client.username or client.first_name} (только цифры):"
-        )
-        await state.set_state(AdminStates.waiting_payment_amount)
-        await callback.answer()
-
-
-@router.message(AdminStates.waiting_payment_amount, F.text)
-async def payment_amount_enter(message: types.Message, state: FSMContext):
-    """Ввод суммы платежа."""
-    if not is_admin(message.from_user.id):
-        return
-
-    try:
-        amount = int(message.text.strip())
-        if amount <= 0:
-            await message.answer("❌ Сумма должна быть положительным числом. Попробуйте снова:")
-            return
-    except ValueError:
-        await message.answer("❌ Введите число. Попробуйте снова:")
-        return
-
-    data = await state.get_data()
-    payment_id = data.get("payment_id")
-    username = data.get("username")
-
-    await message.answer(
-        f"💰 Подтверждаем платёж @{username} на <b>{amount} руб.</b>\n\n"
-        f"Подтвердите действие:",
-        reply_markup=payment_confirm_final_keyboard(payment_id, amount)
-    )
-    await state.clear()
-
 
 @router.callback_query(F.data.startswith("admin:payment_confirm_final:"))
 async def payment_confirm_final(callback: types.CallbackQuery):
-    """Финальное подтверждение платежа."""
+    """Подтверждение платежа с выбором суммы."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
@@ -1590,7 +1527,6 @@ async def payment_reject_confirm(callback: types.CallbackQuery):
 
         await session.commit()
 
-        # Уведомляем клиента
         try:
             await callback.bot.send_message(
                 client.telegram_id,

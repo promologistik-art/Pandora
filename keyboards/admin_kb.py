@@ -75,16 +75,23 @@ def confirm_delete_user_keyboard(client_id: int) -> InlineKeyboardMarkup:
 
 
 def payment_confirm_keyboard(payment_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура для подтверждения платежа."""
+    """Клавиатура для подтверждения платежа с выбором суммы."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Подтвердить", callback_data=f"admin:payment_confirm:{payment_id}")
+    
+    # Кнопки с суммами тарифов
+    for key, tariff in config.TARIFFS.items():
+        builder.button(
+            text=f"{tariff['price']} руб. ({tariff['name']})",
+            callback_data=f"admin:payment_confirm_final:{payment_id}:{tariff['price']}"
+        )
+    
     builder.button(text="❌ Отклонить", callback_data=f"admin:payment_reject:{payment_id}")
-    builder.adjust(1)
+    builder.adjust(1)  # По одной кнопке на строку
     return builder.as_markup()
 
 
 def payment_confirm_final_keyboard(payment_id: int, amount: int) -> InlineKeyboardMarkup:
-    """Клавиатура финального подтверждения платежа."""
+    """Клавиатура финального подтверждения платежа (оставлена для совместимости)."""
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Подтвердить", callback_data=f"admin:payment_confirm_final:{payment_id}:{amount}")
     builder.button(text="❌ Отмена", callback_data=f"admin:payment_cancel:{payment_id}")
