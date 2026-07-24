@@ -77,7 +77,7 @@ def confirm_delete_user_keyboard(client_id: int) -> InlineKeyboardMarkup:
 def payment_confirm_keyboard(payment_id: int) -> InlineKeyboardMarkup:
     """Клавиатура для подтверждения платежа."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="💰 Ввести сумму", callback_data=f"admin:payment_amount:{payment_id}")
+    builder.button(text="✅ Подтвердить", callback_data=f"admin:payment_confirm:{payment_id}")
     builder.button(text="❌ Отклонить", callback_data=f"admin:payment_reject:{payment_id}")
     builder.adjust(1)
     return builder.as_markup()
@@ -86,7 +86,7 @@ def payment_confirm_keyboard(payment_id: int) -> InlineKeyboardMarkup:
 def payment_confirm_final_keyboard(payment_id: int, amount: int) -> InlineKeyboardMarkup:
     """Клавиатура финального подтверждения платежа."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Подтвердить", callback_data=f"admin:payment_confirm:{payment_id}:{amount}")
+    builder.button(text="✅ Подтвердить", callback_data=f"admin:payment_confirm_final:{payment_id}:{amount}")
     builder.button(text="❌ Отмена", callback_data=f"admin:payment_cancel:{payment_id}")
     builder.adjust(2)
     return builder.as_markup()

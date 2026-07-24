@@ -1345,11 +1345,12 @@ async def cleanup_subscriptions(callback: types.CallbackQuery):
 
 
 # ========================
-# ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА (С РЕФЕРАЛКОЙ)
+# ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА (С КНОПКАМИ)
 # ========================
 
-@router.callback_query(F.data.startswith("admin:payment_amount:"))
-async def payment_amount_start(callback: types.CallbackQuery, state: FSMContext):
+@router.callback_query(F.data.startswith("admin:payment_confirm:"))
+async def payment_confirm_start(callback: types.CallbackQuery, state: FSMContext):
+    """Начало подтверждения платежа — запрос суммы."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
@@ -1384,6 +1385,7 @@ async def payment_amount_start(callback: types.CallbackQuery, state: FSMContext)
 
 @router.message(AdminStates.waiting_payment_amount, F.text)
 async def payment_amount_enter(message: types.Message, state: FSMContext):
+    """Ввод суммы платежа."""
     if not is_admin(message.from_user.id):
         return
 
@@ -1408,8 +1410,9 @@ async def payment_amount_enter(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-@router.callback_query(F.data.startswith("admin:payment_confirm:"))
-async def payment_confirm(callback: types.CallbackQuery):
+@router.callback_query(F.data.startswith("admin:payment_confirm_final:"))
+async def payment_confirm_final(callback: types.CallbackQuery):
+    """Финальное подтверждение платежа."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
@@ -1471,9 +1474,7 @@ async def payment_confirm(callback: types.CallbackQuery):
         session.add(event)
         await session.commit()
 
-        # ========================================
-        # === РЕФЕРАЛЬНАЯ ПРОГРАММА ===
-        # ========================================
+        # Реферальная программа
         if client.referrer_id:
             existing_referral = await session.execute(
                 select(Referral).where(Referral.referred_id == client.id)
@@ -1506,6 +1507,7 @@ async def payment_confirm(callback: types.CallbackQuery):
                     except Exception as e:
                         logger.error(f"Не удалось уведомить реферера {client.referrer_id}: {e}")
 
+    # Уведомляем клиента
     try:
         await callback.bot.send_message(
             client.telegram_id,
@@ -1525,6 +1527,7 @@ async def payment_confirm(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin:payment_reject:"))
 async def payment_reject_start(callback: types.CallbackQuery):
+    """Начало отклонения платежа — подтверждение."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
@@ -1558,6 +1561,7 @@ async def payment_reject_start(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin:payment_reject_confirm:"))
 async def payment_reject_confirm(callback: types.CallbackQuery):
+    """Подтверждение отклонения платежа."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
@@ -1586,6 +1590,7 @@ async def payment_reject_confirm(callback: types.CallbackQuery):
 
         await session.commit()
 
+        # Уведомляем клиента
         try:
             await callback.bot.send_message(
                 client.telegram_id,
@@ -1601,6 +1606,7 @@ async def payment_reject_confirm(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin:payment_cancel:"))
 async def payment_cancel(callback: types.CallbackQuery):
+    """Отмена действия с платежом."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
