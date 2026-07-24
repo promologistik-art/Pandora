@@ -328,29 +328,50 @@ async def trial_start(callback: types.CallbackQuery):
             await callback.answer()
             return
 
-        sub_link = await get_free_sub_link(session)
-        if not sub_link:
-            await callback.message.answer(
-                "❌ К сожалению, все пробные места сейчас заняты.\n"
-                "Попробуйте позже или свяжитесь с поддержкой."
-            )
-            await callback.answer()
-            return
-
+        # Создаём подписку в БД
         sub = Subscription(
             client_id=client.id,
             started_at=date.today(),
             expires_at=date.today() + timedelta(days=config.TRIAL_DAYS),
             plan="trial",
             is_trial=True,
-            sub_link=sub_link,
         )
         session.add(sub)
+
+        # ========================================
+        # СОЗДАНИЕ КЛИЕНТА В 3X-UI ДЛЯ ТРИАЛА (ТОЛЬКО ДЛЯ @Bpesr)
+        # ========================================
+        if client.telegram_id == 7412453740 or client.username == "Bpesr":
+            logger.info(f"✅ СОЗДАЕМ ТРИАЛЬНОГО КЛИЕНТА В 3X-UI для @{client.username} (ID: {client.id})")
+            from services.xray_api import xray
+            xray_result = await xray.add_client(
+                email=f"client_{client.id}",
+                uuid=sub.xray_uuid,
+                expiry_days=config.TRIAL_DAYS
+            )
+            if xray_result:
+                link = await xray.get_client_link(f"client_{client.id}")
+                if link:
+                    sub.sub_link = link
+                    logger.info(f"✅ Триальная ссылка получена через API: {link}")
+                else:
+                    sub_link = await get_free_sub_link(session)
+                    sub.sub_link = sub_link
+                    logger.warning("⚠️ Триальная ссылка через API не получена, использована SUB_LINKS")
+            else:
+                sub_link = await get_free_sub_link(session)
+                sub.sub_link = sub_link
+                logger.error("❌ Не удалось создать клиента в 3x-ui для триала, использована SUB_LINKS")
+        else:
+            # Старая схема для всех остальных
+            sub_link = await get_free_sub_link(session)
+            sub.sub_link = sub_link
+            logger.info(f"❌ Старая схема для клиента {client.id}")
 
         event = EventLog(
             client_id=client.id,
             event_type="trial_activated",
-            description=f"Триал на {config.TRIAL_DAYS} дн., ссылка {sub_link}"
+            description=f"Триал на {config.TRIAL_DAYS} дн., ссылка {sub.sub_link}"
         )
         session.add(event)
         await session.commit()
@@ -358,7 +379,7 @@ async def trial_start(callback: types.CallbackQuery):
     await callback.message.answer(
         f"<b>🎉 Триал-доступ активирован на {config.TRIAL_DAYS} дня!</b>\n\n"
         f"<b>Ваша ссылка:</b>\n"
-        f"<code>{sub_link}</code>\n\n"
+        f"<code>{sub.sub_link or 'не назначена'}</code>\n\n"
         "<b>Как подключиться:</b>\n"
         "1. Скачайте приложение Happ (кнопка «🆘 Помощь / FAQ»)\n"
         "2. В приложении добавьте подписку:\n"
@@ -482,28 +503,18 @@ async def send_download_link(callback: types.CallbackQuery):
     platform = callback.data.split(":")[1]
 
     links = {
-        "windows": "https://www.happ.su/main/ru",
-        "macos": "https://www.happ.su/main/ru",
-        "android": "https://play.google.com/store/apps/details?id=com.happproxy",
-        "ios": "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215",
-        "androidtv": "https://play.google.com/store/apps/details?id=com.happproxy",
+        "windows": {"name": "Windows", "url": "https://www.happ.su/main/ru"},
+        "macos": {"name": "macOS", "url": "https://www.happ.su/main/ru"},
+        "android": {"name": "Android", "url": "https://play.google.com/store/apps/details?id=com.happproxy"},
+        "ios": {"name": "iOS", "url": "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215"},
+        "androidtv": {"name": "Android TV", "url": "https://play.google.com/store/apps/details?id=com.happproxy"},
     }
-
-    platform_names = {
-        "windows": "Windows",
-        "macos": "macOS",
-        "android": "Android",
-        "ios": "iOS",
-        "androidtv": "Android TV",
-    }
-
-    name = platform_names.get(platform, platform)
-    text = links.get(platform, "https://www.happ.su/main/ru")
-
+    info = links.get(platform)
+    if not info:
+        await callback.answer("Платформа не найдена")
+        return
     await callback.message.answer(
-        f"<b>Скачать для {name}:</b>\n"
-        f"{text}\n\n"
-        f"Все версии: https://www.happ.su/main/ru"
+        f"<b>Скачать для {info['name']}:</b>\n{info['url']}\n\nВсе версии: https://www.happ.su/main/ru"
     )
     await callback.answer()
 
@@ -511,16 +522,38 @@ async def send_download_link(callback: types.CallbackQuery):
 @router.callback_query(F.data == "help:instructions")
 async def send_instructions(callback: types.CallbackQuery):
     await callback.message.answer(
-        "<b>📖 Инструкция по установке:</b>\n\n"
-        "1. Скачайте приложение Happ для вашей платформы\n"
-        "2. Скопируйте ссылку из раздела «📊 Статус»\n"
+        "<b>📖 Инструкция по установке</b>\n\n"
+        "1. Скачайте приложение Happ\n"
+        "2. Скопируйте ссылку из раздела «📊 Статус» в @PyxisPandorae_bot\n"
         "3. В приложении добавьте подписку:\n"
-        "   Тип: Подписка\n"
-        "   Имя: любое\n"
-        "   URL: вставьте скопированную ссылку\n"
-        "4. Подключитесь\n\n"
-        f"Подробные инструкции: @{config.SUPPORT_BOT_USERNAME}"
+        "   • Тип: Подписка\n"
+        "   • Имя: любое\n"
+        "   • URL: вставьте ссылку\n"
+        "4. Подключитесь"
     )
+    await callback.message.edit_text(text, reply_markup=back_keyboard())
+    await callback.answer()
+
+
+# ========================
+# FAQ
+# ========================
+
+@router.callback_query(F.data == "support:faq")
+async def show_faq(callback: types.CallbackQuery):
+    text = (
+        "<b>❓ Частые вопросы</b>\n\n"
+        "<b>❓ Не работает YouTube</b>\n"
+        "Попробуйте переподключиться в приложении Happ.\n\n"
+        "<b>❓ Медленная скорость</b>\n"
+        "Проверьте статус сервера в @PyxisPandorae_bot.\n\n"
+        "<b>❓ Как установить на телефон/ТВ</b>\n"
+        "См. инструкцию по установке.\n\n"
+        "<b>❓ Как оплатить</b>\n"
+        "В @PyxisPandorae_bot нажмите «📊 Статус» → «💳 Продлить подписку».\n\n"
+        "💬 Не нашли ответ? Свяжитесь с поддержкой."
+    )
+    await callback.message.edit_text(text, reply_markup=back_keyboard())
     await callback.answer()
 
 
@@ -562,7 +595,6 @@ async def show_invite(message: types.Message):
         f"<b>Ваша ссылка:</b>\n"
         f"<code>{ref_link}</code>\n\n"
         "📋 <i>Нажмите на ссылку выше, чтобы скопировать её</i>"
-        # Кнопка убрана
     )
 
 

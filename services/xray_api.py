@@ -119,8 +119,10 @@ class XRayAPI:
 
     async def add_client(self, email: str, uuid: str, expiry_days: int = 30) -> dict | None:
         """Добавить клиента в 3x-ui с указанием срока действия."""
+        logger.info(f"3x-ui: НАЧАЛО создания клиента {email}, срок {expiry_days} дней")
         inbound = await self._get_inbound()
         if not inbound:
+            logger.error("3x-ui: inbound не найден, создание клиента невозможно")
             return None
 
         settings = inbound.get("settings", {})
