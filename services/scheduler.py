@@ -199,7 +199,7 @@ async def start_scheduler(bot: Bot):
 
     scheduler.add_job(
         daily_report,
-        CronTrigger(hour=9, minute=0),
+        CronTrigger(hour=4, minute=0),
         args=[bot],
         id="daily_report",
         replace_existing=True,
