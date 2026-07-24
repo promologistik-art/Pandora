@@ -5,7 +5,7 @@ from sqlalchemy import select, func
 
 from config import config
 from database.engine import async_session
-from database.models import Client, Subscription, Payment, EventLog
+from database.models import Client, Subscription, Payment, EventLog, Referral
 
 logger = logging.getLogger(__name__)
 
@@ -104,3 +104,29 @@ async def is_client_banned(telegram_id: int) -> bool:
         )
         status = result.scalar_one_or_none()
         return status == "banned"
+
+
+async def get_referral_stats(client_id: int) -> dict:
+    """Получить статистику рефералов для клиента."""
+    async with async_session() as session:
+        total = await session.scalar(
+            select(func.count(Referral.id))
+            .where(Referral.referrer_id == client_id)
+            .where(Referral.bonus_applied == True)
+        )
+        
+        active = await session.scalar(
+            select(func.count(Referral.id))
+            .where(Referral.referrer_id == client_id)
+            .where(Referral.bonus_applied == True)
+            .where(
+                Subscription.client_id == Referral.referred_id,
+                Subscription.status == "active",
+                Subscription.expires_at >= date.today()
+            )
+        )
+        
+        return {
+            "total": total or 0,
+            "active": active or 0,
+        }

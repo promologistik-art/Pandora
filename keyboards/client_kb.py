@@ -10,6 +10,7 @@ def main_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="📊 Статус", callback_data="menu:status")
     builder.button(text="🆘 Помощь / FAQ", callback_data="menu:help")
     builder.button(text="🎁 Пригласить друга", callback_data="menu:invite")
+    builder.button(text="👥 Мои рефералы", callback_data="menu:referrals")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -21,6 +22,7 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="📊 Статус", callback_data="menu:status")
     builder.button(text="🆘 Помощь / FAQ", callback_data="menu:help")
     builder.button(text="🎁 Пригласить друга", callback_data="menu:invite")
+    builder.button(text="👥 Мои рефералы", callback_data="menu:referrals")
     builder.button(text="⚙️ Админка", callback_data="menu:admin")
     builder.adjust(1)
     return builder.as_markup()

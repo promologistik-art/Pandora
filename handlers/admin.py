@@ -11,7 +11,7 @@ from sqlalchemy import select, func, text
 
 from config import config
 from database.engine import async_session
-from database.models import Client, Subscription, Payment, EventLog
+from database.models import Client, Subscription, Payment, EventLog, Referral
 from services.client_service import (
     get_or_create_client, get_active_subscription,
     is_admin, get_free_sub_link
@@ -124,7 +124,6 @@ async def list_clients(callback: types.CallbackQuery):
             sub_text = "нет подписки"
             emoji = "❌"
         
-        # ID клиента — кликабельная ссылка на бота с параметром
         text += (
             f"{emoji} <a href=\"https://t.me/{config.BOT_USERNAME}?start=user_{c.id}\">ID {c.id}</a> | @{c.username or 'нет'}\n"
             f"   {c.first_name} | {sub_text}\n\n"
@@ -901,7 +900,7 @@ async def cleanup_subscriptions(callback: types.CallbackQuery):
 
 
 # ========================
-# ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА
+# ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА (С РЕФЕРАЛКОЙ)
 # ========================
 
 @router.callback_query(F.data.startswith("admin:payment_amount:"))
@@ -1026,6 +1025,45 @@ async def payment_confirm(callback: types.CallbackQuery):
         )
         session.add(event)
         await session.commit()
+
+        # ========================================
+        # === РЕФЕРАЛЬНАЯ ПРОГРАММА ===
+        # ========================================
+        if client.referrer_id:
+            # Проверяем, был ли уже начислен бонус за этого реферала
+            existing_referral = await session.execute(
+                select(Referral).where(Referral.referred_id == client.id)
+            )
+            if not existing_referral.scalar_one_or_none():
+                # Создаём запись о реферале
+                referral = Referral(
+                    referrer_id=client.referrer_id,
+                    referred_id=client.id,
+                    bonus_days=config.REFERRAL_BONUS_DAYS,
+                    bonus_applied=True,
+                    referred_paid_at=date.today()
+                )
+                session.add(referral)
+                await session.commit()
+                
+                # Начисляем бонус рефереру
+                referrer_sub = await get_active_subscription(client.referrer_id)
+                if referrer_sub:
+                    referrer_sub.expires_at = referrer_sub.expires_at + timedelta(days=config.REFERRAL_BONUS_DAYS)
+                    await session.commit()
+                    
+                    # Уведомляем реферера
+                    try:
+                        referrer_client = await session.get(Client, client.referrer_id)
+                        if referrer_client:
+                            await callback.bot.send_message(
+                                referrer_client.telegram_id,
+                                f"🎉 <b>Ваш друг @{client.username or client.first_name} активировал подписку!</b>\n\n"
+                                f"Вам начислено <b>{config.REFERRAL_BONUS_DAYS} дней</b> бесплатного доступа.\n"
+                                f"Теперь ваша подписка действует до {referrer_sub.expires_at.strftime('%d.%m.%Y')}."
+                            )
+                    except Exception as e:
+                        logger.error(f"Не удалось уведомить реферера {client.referrer_id}: {e}")
 
     try:
         await callback.bot.send_message(

@@ -31,6 +31,8 @@ class Client(Base):
     events = relationship("EventLog", back_populates="client", lazy="selectin")
     routers = relationship("Router", back_populates="client", lazy="selectin")
     referred_clients = relationship("Client", backref="referrer", remote_side=[id], lazy="selectin")
+    referrals_made = relationship("Referral", foreign_keys="Referral.referrer_id", back_populates="referrer", lazy="selectin")
+    referral_from = relationship("Referral", foreign_keys="Referral.referred_id", back_populates="referred", lazy="selectin")
 
 
 class Subscription(Base):
@@ -63,6 +65,21 @@ class Payment(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="payments")
+
+
+class Referral(Base):
+    __tablename__ = "referrals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    referrer_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    referred_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    bonus_days = Column(Integer, default=7)
+    bonus_applied = Column(Boolean, default=False)
+    referred_paid_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    referrer = relationship("Client", foreign_keys=[referrer_id], back_populates="referrals_made")
+    referred = relationship("Client", foreign_keys=[referred_id], back_populates="referral_from")
 
 
 class TrafficLog(Base):

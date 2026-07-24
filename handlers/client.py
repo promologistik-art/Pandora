@@ -8,7 +8,7 @@ from sqlalchemy import select, func
 
 from config import config
 from database.engine import async_session
-from database.models import Client, Subscription, Payment, EventLog
+from database.models import Client, Subscription, Payment, EventLog, Referral
 from services.client_service import (
     get_or_create_client, get_active_subscription,
     is_admin, add_referral_bonus, get_free_sub_link
@@ -94,6 +94,54 @@ async def show_user_profile_by_id(message: types.Message, user_id: int):
 
 
 # ========================
+# ПОКАЗ РЕФЕРАЛОВ
+# ========================
+
+async def show_referrals(message: types.Message):
+    """Показывает список рефералов пользователя."""
+    client = await get_or_create_client(
+        message.chat.id,
+        message.from_user.username if message.from_user else None,
+        message.from_user.first_name if message.from_user else "Пользователь"
+    )
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Referral, Client.username, Client.first_name)
+            .join(Client, Referral.referred_id == Client.id)
+            .where(Referral.referrer_id == client.id)
+            .where(Referral.bonus_applied == True)
+            .order_by(Referral.referred_paid_at.desc())
+        )
+        referrals = result.all()
+        
+        # Считаем общее количество рефералов
+        total = await session.scalar(
+            select(func.count(Referral.id))
+            .where(Referral.referrer_id == client.id)
+            .where(Referral.bonus_applied == True)
+        )
+
+    if not referrals:
+        await message.answer(
+            "📭 У вас пока нет рефералов, которые активировали подписку.\n\n"
+            "Приглашайте друзей и получайте бонусные дни!\n"
+            f"За каждого друга, который оплатит подписку, вы получите +{config.REFERRAL_BONUS_DAYS} дней."
+        )
+        return
+
+    text = f"<b>🎁 Ваши рефералы ({total or 0})</b>\n\n"
+    for ref, username, first_name in referrals:
+        name = username or first_name
+        date_str = ref.referred_paid_at.strftime('%d.%m.%Y') if ref.referred_paid_at else 'дата неизвестна'
+        text += f"• @{name} — оплатил {date_str} (+{ref.bonus_days} дней)\n"
+    
+    text += f"\n<i>За каждого нового друга вы получаете +{config.REFERRAL_BONUS_DAYS} дней подписки!</i>"
+
+    await message.answer(text)
+
+
+# ========================
 # СТАРТ
 # ========================
 
@@ -116,7 +164,7 @@ async def cmd_start(message: types.Message):
             return
         
         await show_user_profile_by_id(message, user_id)
-        return  # <-- ВАЖНО: выходим, чтобы не показывать приветствие
+        return
     
     # ========================================
     # 2. ПРОВЕРКА: не забанен ли пользователь
@@ -173,7 +221,15 @@ async def cmd_start(message: types.Message):
                 client.referrer_id = ref_arg
                 client.source = "referral"
                 await session.commit()
-                await add_referral_bonus(referrer, session)
+                
+                # Логируем событие
+                event = EventLog(
+                    client_id=client.id,
+                    event_type="referral_click",
+                    description=f"Переход по реферальной ссылке от {referrer.id}"
+                )
+                session.add(event)
+                await session.commit()
 
     welcome = (
         "<b>📦 Ящик Пандоры</b> — стабильный VPN с умной маршрутизацией.\n"
@@ -458,6 +514,12 @@ async def show_invite(message: types.Message):
         "Или нажмите кнопку ниже, чтобы поделиться:",
         reply_markup=referral_keyboard(client.id)
     )
+
+
+@router.callback_query(F.data == "menu:referrals")
+async def referrals_callback(callback: types.CallbackQuery):
+    await show_referrals(callback.message)
+    await callback.answer()
 
 
 # ========================

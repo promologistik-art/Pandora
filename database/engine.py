@@ -28,10 +28,10 @@ async def get_session() -> AsyncSession:
 async def init_db():
     """Инициализация базы данных с автоматическим добавлением колонок."""
     async with engine.begin() as conn:
-        # Создаём таблицы, если их нет (существующие не трогаем)
+        # Создаём таблицы, если их нет
         await conn.run_sync(Base.metadata.create_all)
         logger.info("Таблицы созданы (если отсутствовали)")
         
-        # Применяем миграции (добавляем недостающие колонки)
+        # Применяем миграции (добавляем недостающие колонки и таблицы)
         await Migration.apply_all(conn)
         logger.info("База данных инициализирована")
