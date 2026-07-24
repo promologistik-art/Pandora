@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class XRayAPI:
     def __init__(self):
         self.base_url = config.XUI_HOST.rstrip("/")
-        self.api_token = getattr(config, 'XUI_API_TOKEN', None)
+        self.api_token = config.XUI_API_TOKEN
         self._session: httpx.AsyncClient | None = None
 
     async def _get_session(self) -> httpx.AsyncClient:
