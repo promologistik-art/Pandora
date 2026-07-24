@@ -168,9 +168,10 @@ async def cmd_start(message: types.Message):
         return
     
     # ========================================
-    # 2. ПРОВЕРКА: не забанен ли пользователь
+    # 2. ОДНА СЕССИЯ ДЛЯ ВСЕГО
     # ========================================
     async with async_session() as session:
+        # Проверка на бан
         result = await session.execute(
             select(Client).where(Client.telegram_id == message.from_user.id)
         )
@@ -182,60 +183,68 @@ async def cmd_start(message: types.Message):
             )
             return
 
-    # ========================================
-    # 3. ОБЫЧНЫЙ СТАРТ (СОЗДАНИЕ КЛИЕНТА)
-    # ========================================
-    client = await get_or_create_client(
-        message.from_user.id,
-        message.from_user.username,
-        message.from_user.first_name
-    )
+        # Создаём клиента, если его нет
+        if client is None:
+            client = Client(
+                telegram_id=message.from_user.id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                status="active",
+            )
+            session.add(client)
+            await session.commit()
+            await session.refresh(client)
+            
+            logger.info(f"Новый клиент: {client.id} (@{client.username})")
+            
+            # Уведомление админов о новом пользователе
+            for admin_id in config.ADMIN_IDS:
+                try:
+                    await message.bot.send_message(
+                        admin_id,
+                        f"🆕 <b>Новый пользователь!</b>\n"
+                        f"ID: {client.id}\n"
+                        f"Имя: {client.first_name}\n"
+                        f"Username: @{client.username or 'нет'}"
+                    )
+                except Exception as e:
+                    logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
+        else:
+            # Если клиент уже существует, обновляем его данные
+            client.username = message.from_user.username
+            client.first_name = message.from_user.first_name
+            await session.commit()
 
-    # Уведомление админов о новом пользователе
-    if client.created_at and (datetime.utcnow() - client.created_at).seconds < 10:
-        for admin_id in config.ADMIN_IDS:
-            try:
-                await message.bot.send_message(
-                    admin_id,
-                    f"🆕 <b>Новый пользователь!</b>\n"
-                    f"ID: {client.id}\n"
-                    f"Имя: {client.first_name}\n"
-                    f"Username: @{client.username or 'нет'}"
-                )
-            except Exception as e:
-                logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
+        # ========================================
+        # 3. ОБРАБОТКА РЕФЕРАЛЬНОЙ ССЫЛКИ (в той же сессии)
+        # ========================================
+        ref_arg = None
+        if len(args) > 1:
+            # Проверяем оба формата: ref_123 и ref123
+            if args[1].startswith("ref_"):
+                try:
+                    ref_id = int(args[1][4:])  # ref_123 → 123
+                    if ref_id != client.id:
+                        ref_arg = ref_id
+                    logger.info(f"Найден реферальный параметр (ref_): {ref_id}")
+                except ValueError:
+                    logger.warning(f"Неверный формат ref_: {args[1]}")
+            elif args[1].startswith("ref"):
+                try:
+                    ref_id = int(args[1][3:])  # ref123 → 123
+                    if ref_id != client.id:
+                        ref_arg = ref_id
+                    logger.info(f"Найден реферальный параметр (ref): {ref_id}")
+                except ValueError:
+                    logger.warning(f"Неверный формат ref: {args[1]}")
 
-    # ========================================
-    # 4. ОБРАБОТКА РЕФЕРАЛЬНОЙ ССЫЛКИ
-    # ========================================
-    ref_arg = None
-    if len(args) > 1:
-        # Проверяем оба формата: ref_123 и ref123
-        if args[1].startswith("ref_"):
-            try:
-                ref_id = int(args[1][4:])  # ref_123 → 123
-                if ref_id != client.id:
-                    ref_arg = ref_id
-                logger.info(f"Найден реферальный параметр (ref_): {ref_id}")
-            except ValueError:
-                logger.warning(f"Неверный формат ref_: {args[1]}")
-        elif args[1].startswith("ref"):
-            try:
-                ref_id = int(args[1][3:])  # ref123 → 123
-                if ref_id != client.id:
-                    ref_arg = ref_id
-                logger.info(f"Найден реферальный параметр (ref): {ref_id}")
-            except ValueError:
-                logger.warning(f"Неверный формат ref: {args[1]}")
-
-    # Если есть реферальный параметр и пользователь ещё не привязан
-    if ref_arg and client.referrer_id is None:
-        async with async_session() as session:
+        # Если есть реферальный параметр и пользователь ещё не привязан
+        if ref_arg and client.referrer_id is None:
             referrer = await session.get(Client, ref_arg)
             if referrer:
                 client.referrer_id = ref_arg
                 client.source = "referral"
-                await session.commit()  # <-- СОХРАНЯЕМ ИЗМЕНЕНИЯ
+                await session.commit()
                 
                 logger.info(f"Реферал #{client.id} привязан к рефереру #{referrer.id}")
                 
@@ -245,10 +254,13 @@ async def cmd_start(message: types.Message):
                     description=f"Переход по реферальной ссылке от {referrer.id}"
                 )
                 session.add(event)
-                await session.commit()  # <-- СОХРАНЯЕМ СОБЫТИЕ
+                await session.commit()
             else:
                 logger.warning(f"Реферер с ID {ref_arg} не найден")
 
+    # ========================================
+    # 4. ПРИВЕТСТВИЕ (вне сессии)
+    # ========================================
     welcome = (
         "<b>📦 Ящик Пандоры</b> — стабильный VPN с умной маршрутизацией.\n"
         "Заблокированные сайты работают, белые списки не тормозят.\n\n"
