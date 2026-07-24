@@ -16,6 +16,7 @@ from services.client_service import (
     get_or_create_client, get_active_subscription,
     is_admin, get_free_sub_link
 )
+from services.xray_api import xray
 from keyboards.admin_kb import (
     admin_keyboard, user_profile_keyboard,
     subscription_list_keyboard, confirm_keyboard,
@@ -781,15 +782,38 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
         if sub:
             sub.expires_at = sub.expires_at + timedelta(days=days)
         else:
-            sub_link = await get_free_sub_link(session)
+            # Создаём подписку в БД
             sub = Subscription(
                 client_id=client.id,
                 started_at=date.today(),
                 expires_at=date.today() + timedelta(days=days),
                 plan="1month",
-                sub_link=sub_link,
             )
             session.add(sub)
+            
+            # Если это @Bpesr — создаём клиента в 3x-ui
+            if client.username == "Bpesr":
+                xray_result = await xray.add_client(
+                    email=f"client_{client.id}",
+                    uuid=sub.xray_uuid,
+                    expiry_days=days
+                )
+                if xray_result:
+                    link = await xray.get_client_link(f"client_{client.id}")
+                    if link:
+                        sub.sub_link = link
+                    else:
+                        # Если не удалось получить ссылку — используем старую схему
+                        sub_link = await get_free_sub_link(session)
+                        sub.sub_link = sub_link
+                else:
+                    # Если не удалось создать клиента — используем старую схему
+                    sub_link = await get_free_sub_link(session)
+                    sub.sub_link = sub_link
+            else:
+                # Старая схема для всех остальных
+                sub_link = await get_free_sub_link(session)
+                sub.sub_link = sub_link
 
         event = EventLog(
             client_id=client.id,
@@ -1344,7 +1368,7 @@ async def cleanup_subscriptions(callback: types.CallbackQuery):
 
 
 # ========================
-# ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА (С КНОПКАМИ СУММ)
+# ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА (С РЕФЕРАЛКОЙ И СОЗДАНИЕМ КЛИЕНТА В 3X-UI)
 # ========================
 
 @router.callback_query(F.data.startswith("admin:payment_confirm_final:"))
@@ -1387,22 +1411,55 @@ async def payment_confirm_final(callback: types.CallbackQuery):
 
         tariff = config.TARIFFS.get(tariff_key, config.TARIFFS["1month"])
 
+        # Проверяем существующую подписку
         existing_sub = await get_active_subscription(client.id)
+        
         if existing_sub:
+            # Продлеваем существующую
             existing_sub.expires_at = existing_sub.expires_at + timedelta(days=tariff["days"])
             existing_sub.plan = tariff_key
             sub = existing_sub
         else:
-            sub_link = await get_free_sub_link(session)
+            # Создаём новую подписку
             sub = Subscription(
                 client_id=client.id,
                 started_at=date.today(),
                 expires_at=date.today() + timedelta(days=tariff["days"]),
                 plan=tariff_key,
-                sub_link=sub_link,
             )
             session.add(sub)
+            
+            # ========================================
+            # СОЗДАНИЕ КЛИЕНТА В 3X-UI (ТОЛЬКО ДЛЯ @Bpesr)
+            # ========================================
+            if client.username == "Bpesr":
+                logger.info(f"Создаём клиента в 3x-ui для @{client.username}")
+                xray_result = await xray.add_client(
+                    email=f"client_{client.id}",
+                    uuid=sub.xray_uuid,
+                    expiry_days=tariff["days"]
+                )
+                if xray_result:
+                    link = await xray.get_client_link(f"client_{client.id}")
+                    if link:
+                        sub.sub_link = link
+                        logger.info(f"Ссылка для @{client.username} получена через API")
+                    else:
+                        # Если не удалось получить ссылку через API — берём из пула
+                        sub_link = await get_free_sub_link(session)
+                        sub.sub_link = sub_link
+                        logger.info(f"Ссылка для @{client.username} взята из SUB_LINKS")
+                else:
+                    # Если не удалось создать клиента — берём из пула
+                    sub_link = await get_free_sub_link(session)
+                    sub.sub_link = sub_link
+                    logger.warning(f"Не удалось создать клиента в 3x-ui для @{client.username}, использована SUB_LINKS")
+            else:
+                # Старая схема для всех остальных
+                sub_link = await get_free_sub_link(session)
+                sub.sub_link = sub_link
 
+        # Логируем событие
         event = EventLog(
             client_id=client.id,
             event_type="payment_confirmed",
@@ -1411,7 +1468,9 @@ async def payment_confirm_final(callback: types.CallbackQuery):
         session.add(event)
         await session.commit()
 
-        # Реферальная программа
+        # ========================================
+        # РЕФЕРАЛЬНАЯ ПРОГРАММА
+        # ========================================
         if client.referrer_id:
             existing_referral = await session.execute(
                 select(Referral).where(Referral.referred_id == client.id)

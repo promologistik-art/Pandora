@@ -2,6 +2,7 @@ import httpx
 import logging
 import secrets
 import json
+from datetime import datetime, timedelta
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -116,8 +117,8 @@ class XRayAPI:
         logger.error(f"3x-ui: inbound с ID {config.XUI_INBOUND_ID} не найден")
         return None
 
-    async def add_client(self, email: str, uuid: str) -> dict | None:
-        """Добавить клиента в 3x-ui."""
+    async def add_client(self, email: str, uuid: str, expiry_days: int = 30) -> dict | None:
+        """Добавить клиента в 3x-ui с указанием срока действия."""
         inbound = await self._get_inbound()
         if not inbound:
             return None
@@ -127,6 +128,12 @@ class XRayAPI:
             settings = json.loads(settings)
 
         auth = secrets.token_hex(8)
+        
+        # Считаем expiryTime в миллисекундах
+        if expiry_days > 0:
+            expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
+        else:
+            expiry_time = 0
 
         clients = settings.get("clients", [])
         clients.append({
@@ -137,9 +144,9 @@ class XRayAPI:
             "auth": auth,
             "password": auth,
             "subId": email,
-            "limitIp": 0,
+            "limitIp": 3,
             "totalGB": 0,
-            "expiryTime": 0,
+            "expiryTime": expiry_time,
             "tgId": 0,
             "security": "auto",
             "reset": 0,
@@ -171,15 +178,27 @@ class XRayAPI:
         )
 
         if result and result.get("success"):
-            logger.info(f"3x-ui: клиент {email} добавлен")
+            logger.info(f"3x-ui: клиент {email} добавлен, действует до {expiry_days} дней")
             return {
                 "uuid": uuid,
                 "email": email,
-                "host": self.base_url.split("//")[1].split(":")[0] if "//" in self.base_url else "dashoguz.mooo.com",
                 "auth": auth,
             }
         logger.error(f"3x-ui: ошибка добавления клиента - {result}")
         return None
+
+    async def get_client_link(self, email: str) -> str | None:
+        """Получить ссылку на клиента из 3x-ui."""
+        try:
+            data = await self._api_get(f"/panel/api/inbounds/get/{config.XUI_INBOUND_ID}/client/{email}/link")
+            if data and data.get("success"):
+                return data.get("obj")
+            else:
+                logger.warning(f"3x-ui: не удалось получить ссылку для {email}")
+                return None
+        except Exception as e:
+            logger.error(f"3x-ui: ошибка получения ссылки для {email} - {e}")
+            return None
 
     async def remove_client(self, uuid: str) -> bool:
         """Удалить клиента из 3x-ui."""
