@@ -20,7 +20,8 @@ from keyboards.admin_kb import (
     admin_keyboard, user_profile_keyboard,
     subscription_list_keyboard, confirm_keyboard,
     confirm_extend_keyboard, payment_confirm_keyboard,
-    payment_confirm_final_keyboard, payment_reject_keyboard
+    payment_confirm_final_keyboard, payment_reject_keyboard,
+    confirm_delete_user_keyboard
 )
 
 logger = logging.getLogger(__name__)
@@ -237,18 +238,16 @@ async def set_referrer(message: types.Message):
             await message.answer("❌ Нельзя привязать пользователя к самому себе.")
             return
         
-        # Проверяем, не привязан ли уже
         if referred.referrer_id:
             await message.answer(
-                f"⚠️ Пользователь @{referred.username or referred.first_name} уже привязан к рефереру @{referrer.username or referrer.first_name} (ID: {referred.referrer_id}).\n"
-                f"Хотите перепривязать? Используйте /setref_force {referred_id} {referrer_id}"
+                f"⚠️ Пользователь @{referred.username or referred.first_name} уже привязан к рефереру.\n"
+                f"Используйте /setref_force {referred_id} {referrer_id} для перепривязки."
             )
             return
         
         referred.referrer_id = referrer_id
         await session.commit()
         
-        # Логируем событие
         event = EventLog(
             client_id=referred.id,
             event_type="referral_manual",
@@ -299,7 +298,6 @@ async def set_referrer_force(message: types.Message):
         referred.referrer_id = referrer_id
         await session.commit()
         
-        # Логируем событие
         event = EventLog(
             client_id=referred.id,
             event_type="referral_manual_force",
@@ -581,6 +579,122 @@ async def show_user_profile_callback(callback: types.CallbackQuery):
             reply_markup=user_profile_keyboard(client_id, has_subscription)
         )
         await callback.answer()
+
+
+# ========================
+# УДАЛИТЬ ПОЛЬЗОВАТЕЛЯ (ИЗ ПРОФИЛЯ)
+# ========================
+
+@router.callback_query(F.data.startswith("admin:deluser:"))
+async def delete_user_request(callback: types.CallbackQuery):
+    """Запрос на удаление пользователя из профиля."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    client_id = int(parts[2])
+
+    async with async_session() as session:
+        client = await session.get(Client, client_id)
+        if not client:
+            await callback.message.answer("❌ Клиент не найден.")
+            await callback.answer()
+            return
+
+        username = client.username or client.first_name
+        
+        await callback.message.answer(
+            f"⚠️ <b>Вы уверены, что хотите удалить клиента @{username} (ID: {client_id})?</b>\n\n"
+            f"Будут удалены:\n"
+            f"• Все подписки\n"
+            f"• Все платежи\n"
+            f"• Все события\n"
+            f"• Все реферальные связи\n\n"
+            f"Это действие <b>НЕЛЬЗЯ ОТМЕНИТЬ</b>!",
+            reply_markup=confirm_delete_user_keyboard(client_id)
+        )
+        await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:deluser_confirm:"))
+async def delete_user_confirm_callback(callback: types.CallbackQuery):
+    """Подтверждение удаления пользователя."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка формата данных")
+        return
+
+    client_id = int(parts[2])
+
+    async with async_session() as session:
+        client = await session.get(Client, client_id)
+        if not client:
+            await callback.message.answer("❌ Клиент не найден.")
+            await callback.answer()
+            return
+
+        username = client.username or client.first_name
+
+        # Удаляем все связанные записи
+        await session.execute(
+            text("DELETE FROM subscriptions WHERE client_id = :uid"),
+            {"uid": client_id}
+        )
+        await session.execute(
+            text("DELETE FROM payments WHERE client_id = :uid"),
+            {"uid": client_id}
+        )
+        await session.execute(
+            text("DELETE FROM event_log WHERE client_id = :uid"),
+            {"uid": client_id}
+        )
+        await session.execute(
+            text("DELETE FROM traffic_log WHERE client_id = :uid"),
+            {"uid": client_id}
+        )
+        await session.execute(
+            text("DELETE FROM referrals WHERE referrer_id = :uid OR referred_id = :uid"),
+            {"uid": client_id}
+        )
+        await session.execute(
+            text("DELETE FROM routers WHERE client_id = :uid"),
+            {"uid": client_id}
+        )
+        await session.execute(
+            text("DELETE FROM router_commands WHERE router_uid IN (SELECT router_uid FROM routers WHERE client_id = :uid)"),
+            {"uid": client_id}
+        )
+
+        # Удаляем самого клиента
+        await session.execute(
+            text("DELETE FROM clients WHERE id = :uid"),
+            {"uid": client_id}
+        )
+
+        await session.commit()
+
+    await callback.message.edit_text(f"✅ Клиент @{username} (ID: {client_id}) и все его данные удалены.")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:deluser_cancel:"))
+async def delete_user_cancel(callback: types.CallbackQuery):
+    """Отмена удаления пользователя."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    await callback.message.edit_text("❌ Удаление отменено.")
+    await callback.answer()
 
 
 # ========================
@@ -1361,12 +1475,10 @@ async def payment_confirm(callback: types.CallbackQuery):
         # === РЕФЕРАЛЬНАЯ ПРОГРАММА ===
         # ========================================
         if client.referrer_id:
-            # Проверяем, был ли уже начислен бонус за этого реферала
             existing_referral = await session.execute(
                 select(Referral).where(Referral.referred_id == client.id)
             )
             if not existing_referral.scalar_one_or_none():
-                # Создаём запись о реферале
                 referral = Referral(
                     referrer_id=client.referrer_id,
                     referred_id=client.id,
@@ -1377,13 +1489,11 @@ async def payment_confirm(callback: types.CallbackQuery):
                 session.add(referral)
                 await session.commit()
                 
-                # Начисляем бонус рефереру
                 referrer_sub = await get_active_subscription(client.referrer_id)
                 if referrer_sub:
                     referrer_sub.expires_at = referrer_sub.expires_at + timedelta(days=config.REFERRAL_BONUS_DAYS)
                     await session.commit()
                     
-                    # Уведомляем реферера
                     try:
                         referrer_client = await session.get(Client, client.referrer_id)
                         if referrer_client:

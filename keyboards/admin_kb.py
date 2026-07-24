@@ -27,6 +27,7 @@ def user_profile_keyboard(client_id: int, has_subscription: bool = False) -> Inl
     builder.button(text="🧹 Очистить истекшие", callback_data=f"admin:cleansub:{client_id}")
     builder.button(text="🚫 Заблокировать", callback_data=f"admin:ban:{client_id}")
     builder.button(text="✅ Разблокировать", callback_data=f"admin:unban:{client_id}")
+    builder.button(text="🗑️ Удалить пользователя", callback_data=f"admin:deluser:{client_id}")
     builder.button(text="🔙 Назад к списку", callback_data="admin:clients")
     builder.adjust(1)
     return builder.as_markup()
@@ -60,6 +61,15 @@ def confirm_extend_keyboard(client_id: int, days: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Да", callback_data=f"admin:confirm_extend:{client_id}:{days}")
     builder.button(text="❌ Нет", callback_data=f"admin:cancel_extend:{client_id}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def confirm_delete_user_keyboard(client_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения удаления пользователя."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, удалить", callback_data=f"admin:deluser_confirm:{client_id}")
+    builder.button(text="❌ Отмена", callback_data=f"admin:deluser_cancel:{client_id}")
     builder.adjust(2)
     return builder.as_markup()
 

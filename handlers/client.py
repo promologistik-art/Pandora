@@ -19,7 +19,7 @@ from keyboards.client_kb import (
     help_keyboard, downloads_keyboard, referral_keyboard
 )
 from keyboards.admin_kb import (
-    payment_confirm_keyboard, user_profile_keyboard
+    payment_confirm_keyboard, user_profile_keyboard, admin_keyboard
 )
 
 logger = logging.getLogger(__name__)
@@ -272,6 +272,25 @@ async def cmd_start(message: types.Message):
         await message.answer(welcome, reply_markup=admin_main_keyboard())
     else:
         await message.answer(welcome, reply_markup=main_keyboard())
+
+
+# ========================
+# АДМИН-ПАНЕЛЬ (через кнопку)
+# ========================
+
+@router.callback_query(F.data == "menu:admin")
+async def admin_panel_callback(callback: types.CallbackQuery):
+    """Вход в админ-панель через кнопку."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+    
+    await callback.message.answer(
+        "<b>⚙️ Админ-панель</b>\n\n"
+        "Выберите действие:",
+        reply_markup=admin_keyboard()
+    )
+    await callback.answer()
 
 
 # ========================
