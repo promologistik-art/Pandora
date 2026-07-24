@@ -90,6 +90,70 @@ async def cmd_admin(message: types.Message):
 
 
 # ========================
+# КОМАНДА /referrals (СТАТИСТИКА РЕФЕРАЛОВ)
+# ========================
+
+@router.message(Command("referrals"))
+async def show_all_referrals(message: types.Message):
+    """Показывает всю статистику по рефералам (для админов)."""
+    if not is_admin(message.from_user.id):
+        return
+
+    async with async_session() as session:
+        # Получаем всех клиентов у которых есть referrer_id
+        result = await session.execute(
+            select(Client)
+            .where(Client.referrer_id.isnot(None))
+            .order_by(Client.id)
+        )
+        referred_clients = result.scalars().all()
+        
+        if not referred_clients:
+            await message.answer("📭 Нет зарегистрированных рефералов.")
+            return
+        
+        # Собираем статистику по рефералам
+        text = "<b>📊 Статистика рефералов</b>\n\n"
+        
+        for client in referred_clients:
+            # Находим реферера
+            referrer = await session.get(Client, client.referrer_id)
+            referrer_name = f"@{referrer.username or referrer.first_name}" if referrer else "❌ УДАЛЁН"
+            
+            # Проверяем, был ли начислен бонус
+            referral_record = await session.execute(
+                select(Referral)
+                .where(Referral.referred_id == client.id)
+                .where(Referral.bonus_applied == True)
+            )
+            referral = referral_record.scalar_one_or_none()
+            
+            # Проверяем, есть ли активная подписка у реферала
+            has_active_sub = await get_active_subscription(client.id) is not None
+            
+            status_emoji = "✅" if has_active_sub else "❌"
+            bonus_status = "✅ начислен" if referral else "⏳ ожидает оплаты"
+            
+            text += (
+                f"{status_emoji} <b>@{client.username or client.first_name}</b>\n"
+                f"   Реферер: {referrer_name}\n"
+                f"   Статус: {'активная подписка' if has_active_sub else 'нет подписки'}\n"
+                f"   Бонус: {bonus_status}\n"
+                f"   ID: {client.id} | Telegram: {client.telegram_id}\n\n"
+            )
+        
+        # Общая статистика
+        total = len(referred_clients)
+        with_bonus = await session.scalar(
+            select(func.count(Referral.id)).where(Referral.bonus_applied == True)
+        )
+        
+        text += f"<i>Всего рефералов: {total} | С начисленным бонусом: {with_bonus or 0}</i>"
+        
+        await message.answer(text)
+
+
+# ========================
 # СПИСОК КЛИЕНТОВ
 # ========================
 
