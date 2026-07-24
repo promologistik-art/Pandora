@@ -259,6 +259,7 @@ async def delete_user_confirm(message: types.Message):
         return
 
     async with async_session() as session:
+        # Проверяем, существует ли клиент
         client = await session.get(Client, user_id)
         if not client:
             await message.answer(f"❌ Клиент с ID {user_id} не найден.")
@@ -266,49 +267,61 @@ async def delete_user_confirm(message: types.Message):
         
         username = client.username or client.first_name
         
-        # Удаляем все связанные записи
-        # 1. Подписки
+        # 1. Сначала получаем все связанные записи
+        # 2. Удаляем их в правильном порядке (сначала дочерние, потом родительские)
+        
+        # Удаляем подписки
         await session.execute(
             text("DELETE FROM subscriptions WHERE client_id = :uid"),
             {"uid": user_id}
         )
         
-        # 2. Платежи
+        # Удаляем платежи
         await session.execute(
             text("DELETE FROM payments WHERE client_id = :uid"),
             {"uid": user_id}
         )
         
-        # 3. События
+        # Удаляем события
         await session.execute(
             text("DELETE FROM event_log WHERE client_id = :uid"),
             {"uid": user_id}
         )
         
-        # 4. Трафик (если есть)
+        # Удаляем трафик (если есть)
         await session.execute(
             text("DELETE FROM traffic_log WHERE client_id = :uid"),
             {"uid": user_id}
         )
         
-        # 5. Рефералы (где этот клиент был реферером или рефералом)
+        # Удаляем реферальные связи (где этот клиент был реферером или рефералом)
         await session.execute(
             text("DELETE FROM referrals WHERE referrer_id = :uid OR referred_id = :uid"),
             {"uid": user_id}
         )
         
-        # 6. Роутеры (если есть)
+        # Удаляем роутеры (если есть)
         await session.execute(
             text("DELETE FROM routers WHERE client_id = :uid"),
             {"uid": user_id}
         )
         
-        # Удаляем самого клиента
-        await session.delete(client)
+        # Удаляем команды роутеров (если есть)
+        await session.execute(
+            text("DELETE FROM router_commands WHERE router_uid IN (SELECT router_uid FROM routers WHERE client_id = :uid)"),
+            {"uid": user_id}
+        )
+        
+        # Теперь удаляем самого клиента
+        # Важно: делаем это через delete, а не через session.delete
+        await session.execute(
+            text("DELETE FROM clients WHERE id = :uid"),
+            {"uid": user_id}
+        )
+        
         await session.commit()
 
     await message.answer(f"✅ Клиент @{username} (ID: {user_id}) и все его данные удалены.")
-
 
 # ========================
 # СПИСОК КЛИЕНТОВ
