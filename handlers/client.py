@@ -183,7 +183,7 @@ async def cmd_start(message: types.Message):
             return
 
     # ========================================
-    # 3. ОБЫЧНЫЙ СТАРТ
+    # 3. ОБЫЧНЫЙ СТАРТ (СОЗДАНИЕ КЛИЕНТА)
     # ========================================
     client = await get_or_create_client(
         message.from_user.id,
@@ -228,13 +228,14 @@ async def cmd_start(message: types.Message):
             except ValueError:
                 logger.warning(f"Неверный формат ref: {args[1]}")
 
+    # Если есть реферальный параметр и пользователь ещё не привязан
     if ref_arg and client.referrer_id is None:
         async with async_session() as session:
             referrer = await session.get(Client, ref_arg)
             if referrer:
                 client.referrer_id = ref_arg
                 client.source = "referral"
-                await session.commit()
+                await session.commit()  # <-- СОХРАНЯЕМ ИЗМЕНЕНИЯ
                 
                 logger.info(f"Реферал #{client.id} привязан к рефереру #{referrer.id}")
                 
@@ -244,7 +245,7 @@ async def cmd_start(message: types.Message):
                     description=f"Переход по реферальной ссылке от {referrer.id}"
                 )
                 session.add(event)
-                await session.commit()
+                await session.commit()  # <-- СОХРАНЯЕМ СОБЫТИЕ
             else:
                 logger.warning(f"Реферер с ID {ref_arg} не найден")
 
