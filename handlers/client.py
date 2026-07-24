@@ -93,10 +93,6 @@ async def show_user_profile_by_id(message: types.Message, user_id: int):
         )
 
 
-# ========================
-# ПОКАЗ РЕФЕРАЛОВ
-# ========================
-
 async def show_referrals(message: types.Message):
     """Показывает список рефералов пользователя."""
     client = await get_or_create_client(
@@ -115,7 +111,6 @@ async def show_referrals(message: types.Message):
         )
         referrals = result.all()
         
-        # Считаем общее количество рефералов
         total = await session.scalar(
             select(func.count(Referral.id))
             .where(Referral.referrer_id == client.id)
@@ -147,6 +142,12 @@ async def show_referrals(message: types.Message):
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message):
+    # Логируем входящую команду для отладки
+    logger.info(f"=== CMD_START ===")
+    logger.info(f"Text: {message.text}")
+    logger.info(f"From: {message.from_user.id} (@{message.from_user.username})")
+    logger.info(f"Args: {message.text.split()}")
+    
     args = message.text.split()
     
     # ========================================
@@ -204,15 +205,28 @@ async def cmd_start(message: types.Message):
             except Exception as e:
                 logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
 
-    # Обработка реферальной ссылки
+    # ========================================
+    # 4. ОБРАБОТКА РЕФЕРАЛЬНОЙ ССЫЛКИ
+    # ========================================
     ref_arg = None
-    if len(args) > 1 and args[1].startswith("ref"):
-        try:
-            ref_id = int(args[1][3:])
-            if ref_id != client.id:
-                ref_arg = ref_id
-        except ValueError:
-            pass
+    if len(args) > 1:
+        # Проверяем оба формата: ref_123 и ref123
+        if args[1].startswith("ref_"):
+            try:
+                ref_id = int(args[1][4:])  # ref_123 → 123
+                if ref_id != client.id:
+                    ref_arg = ref_id
+                logger.info(f"Найден реферальный параметр (ref_): {ref_id}")
+            except ValueError:
+                logger.warning(f"Неверный формат ref_: {args[1]}")
+        elif args[1].startswith("ref"):
+            try:
+                ref_id = int(args[1][3:])  # ref123 → 123
+                if ref_id != client.id:
+                    ref_arg = ref_id
+                logger.info(f"Найден реферальный параметр (ref): {ref_id}")
+            except ValueError:
+                logger.warning(f"Неверный формат ref: {args[1]}")
 
     if ref_arg and client.referrer_id is None:
         async with async_session() as session:
@@ -222,7 +236,8 @@ async def cmd_start(message: types.Message):
                 client.source = "referral"
                 await session.commit()
                 
-                # Логируем событие
+                logger.info(f"Реферал #{client.id} привязан к рефереру #{referrer.id}")
+                
                 event = EventLog(
                     client_id=client.id,
                     event_type="referral_click",
@@ -230,6 +245,8 @@ async def cmd_start(message: types.Message):
                 )
                 session.add(event)
                 await session.commit()
+            else:
+                logger.warning(f"Реферер с ID {ref_arg} не найден")
 
     welcome = (
         "<b>📦 Ящик Пандоры</b> — стабильный VPN с умной маршрутизацией.\n"
@@ -504,7 +521,8 @@ async def show_invite(message: types.Message):
         )
         return
 
-    ref_link = f"https://t.me/{config.BOT_USERNAME}?start=ref{client.id}"
+    # Новый формат ссылки с подчёркиванием
+    ref_link = f"https://t.me/{config.BOT_USERNAME}?start=ref_{client.id}"
 
     await message.answer(
         f"<b>🎁 Пригласите друга — получите {config.REFERRAL_BONUS_DAYS} дней бесплатно!</b>\n\n"

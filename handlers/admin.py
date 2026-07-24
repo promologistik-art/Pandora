@@ -201,6 +201,119 @@ async def check_referral_by_username(message: types.Message):
 
 
 # ========================
+# КОМАНДА /setref (РУЧНАЯ ПРИВЯЗКА РЕФЕРАЛА)
+# ========================
+
+@router.message(Command("setref"))
+async def set_referrer(message: types.Message):
+    """Ручная привязка реферера (для админов)."""
+    if not is_admin(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("📝 Использование: /setref [реферал_id] [реферер_id]")
+        return
+
+    try:
+        referred_id = int(args[1])
+        referrer_id = int(args[2])
+    except ValueError:
+        await message.answer("❌ ID должны быть числами.")
+        return
+
+    async with async_session() as session:
+        referred = await session.get(Client, referred_id)
+        if not referred:
+            await message.answer(f"❌ Клиент с ID {referred_id} не найден.")
+            return
+        
+        referrer = await session.get(Client, referrer_id)
+        if not referrer:
+            await message.answer(f"❌ Клиент с ID {referrer_id} не найден.")
+            return
+        
+        if referred_id == referrer_id:
+            await message.answer("❌ Нельзя привязать пользователя к самому себе.")
+            return
+        
+        # Проверяем, не привязан ли уже
+        if referred.referrer_id:
+            await message.answer(
+                f"⚠️ Пользователь @{referred.username or referred.first_name} уже привязан к рефереру @{referrer.username or referrer.first_name} (ID: {referred.referrer_id}).\n"
+                f"Хотите перепривязать? Используйте /setref_force {referred_id} {referrer_id}"
+            )
+            return
+        
+        referred.referrer_id = referrer_id
+        await session.commit()
+        
+        # Логируем событие
+        event = EventLog(
+            client_id=referred.id,
+            event_type="referral_manual",
+            description=f"Ручная привязка к рефереру {referrer_id} (админ)"
+        )
+        session.add(event)
+        await session.commit()
+        
+        await message.answer(
+            f"✅ Пользователь @{referred.username or referred.first_name} (ID: {referred_id}) привязан к рефереру @{referrer.username or referrer.first_name} (ID: {referrer_id})"
+        )
+
+
+@router.message(Command("setref_force"))
+async def set_referrer_force(message: types.Message):
+    """Принудительная ручная привязка реферера (для админов)."""
+    if not is_admin(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("📝 Использование: /setref_force [реферал_id] [реферер_id]")
+        return
+
+    try:
+        referred_id = int(args[1])
+        referrer_id = int(args[2])
+    except ValueError:
+        await message.answer("❌ ID должны быть числами.")
+        return
+
+    async with async_session() as session:
+        referred = await session.get(Client, referred_id)
+        if not referred:
+            await message.answer(f"❌ Клиент с ID {referred_id} не найден.")
+            return
+        
+        referrer = await session.get(Client, referrer_id)
+        if not referrer:
+            await message.answer(f"❌ Клиент с ID {referrer_id} не найден.")
+            return
+        
+        if referred_id == referrer_id:
+            await message.answer("❌ Нельзя привязать пользователя к самому себе.")
+            return
+        
+        old_referrer_id = referred.referrer_id
+        referred.referrer_id = referrer_id
+        await session.commit()
+        
+        # Логируем событие
+        event = EventLog(
+            client_id=referred.id,
+            event_type="referral_manual_force",
+            description=f"Принудительная ручная привязка от {old_referrer_id} к {referrer_id} (админ)"
+        )
+        session.add(event)
+        await session.commit()
+        
+        await message.answer(
+            f"✅ Пользователь @{referred.username or referred.first_name} (ID: {referred_id}) перепривязан с {old_referrer_id or 'никого'} к рефереру @{referrer.username or referrer.first_name} (ID: {referrer_id})"
+        )
+
+
+# ========================
 # КОМАНДА /deluser (УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ)
 # ========================
 
@@ -259,7 +372,6 @@ async def delete_user_confirm(message: types.Message):
         return
 
     async with async_session() as session:
-        # Проверяем, существует ли клиент
         client = await session.get(Client, user_id)
         if not client:
             await message.answer(f"❌ Клиент с ID {user_id} не найден.")
@@ -267,53 +379,37 @@ async def delete_user_confirm(message: types.Message):
         
         username = client.username or client.first_name
         
-        # 1. Сначала получаем все связанные записи
-        # 2. Удаляем их в правильном порядке (сначала дочерние, потом родительские)
-        
-        # Удаляем подписки
+        # Удаляем все связанные записи
         await session.execute(
             text("DELETE FROM subscriptions WHERE client_id = :uid"),
             {"uid": user_id}
         )
-        
-        # Удаляем платежи
         await session.execute(
             text("DELETE FROM payments WHERE client_id = :uid"),
             {"uid": user_id}
         )
-        
-        # Удаляем события
         await session.execute(
             text("DELETE FROM event_log WHERE client_id = :uid"),
             {"uid": user_id}
         )
-        
-        # Удаляем трафик (если есть)
         await session.execute(
             text("DELETE FROM traffic_log WHERE client_id = :uid"),
             {"uid": user_id}
         )
-        
-        # Удаляем реферальные связи (где этот клиент был реферером или рефералом)
         await session.execute(
             text("DELETE FROM referrals WHERE referrer_id = :uid OR referred_id = :uid"),
             {"uid": user_id}
         )
-        
-        # Удаляем роутеры (если есть)
         await session.execute(
             text("DELETE FROM routers WHERE client_id = :uid"),
             {"uid": user_id}
         )
-        
-        # Удаляем команды роутеров (если есть)
         await session.execute(
             text("DELETE FROM router_commands WHERE router_uid IN (SELECT router_uid FROM routers WHERE client_id = :uid)"),
             {"uid": user_id}
         )
         
-        # Теперь удаляем самого клиента
-        # Важно: делаем это через delete, а не через session.delete
+        # Удаляем самого клиента
         await session.execute(
             text("DELETE FROM clients WHERE id = :uid"),
             {"uid": user_id}
@@ -322,6 +418,7 @@ async def delete_user_confirm(message: types.Message):
         await session.commit()
 
     await message.answer(f"✅ Клиент @{username} (ID: {user_id}) и все его данные удалены.")
+
 
 # ========================
 # СПИСОК КЛИЕНТОВ

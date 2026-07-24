@@ -79,7 +79,8 @@ def downloads_keyboard() -> InlineKeyboardMarkup:
 
 def referral_keyboard(client_id: int) -> InlineKeyboardMarkup:
     """Клавиатура реферальной программы."""
-    ref_link = f"https://t.me/{config.BOT_USERNAME}?start=ref{client_id}"
+    # Новый формат ссылки с подчёркиванием для надёжности
+    ref_link = f"https://t.me/{config.BOT_USERNAME}?start=ref_{client_id}"
     builder = InlineKeyboardBuilder()
     builder.button(text="🔗 Моя ссылка", url=ref_link)
     builder.adjust(1)
