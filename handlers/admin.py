@@ -154,6 +154,163 @@ async def show_all_referrals(message: types.Message):
 
 
 # ========================
+# КОМАНДА /checkref (ПРОВЕРКА КОНКРЕТНОГО ПОЛЬЗОВАТЕЛЯ)
+# ========================
+
+@router.message(Command("checkref"))
+async def check_referral_by_username(message: types.Message):
+    """Проверяет реферальную привязку по username."""
+    if not is_admin(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("📝 Использование: /checkref @username")
+        return
+
+    username = args[1].lstrip("@")
+
+    async with async_session() as session:
+        client = await session.execute(
+            select(Client).where(Client.username == username)
+        )
+        client = client.scalar_one_or_none()
+        
+        if not client:
+            await message.answer(f"❌ Пользователь @{username} не найден.")
+            return
+        
+        referrer = None
+        if client.referrer_id:
+            referrer = await session.get(Client, client.referrer_id)
+        
+        text = (
+            f"<b>🔍 Проверка реферала</b>\n\n"
+            f"<b>Пользователь:</b> @{client.username or client.first_name}\n"
+            f"<b>ID:</b> {client.id}\n"
+            f"<b>Telegram ID:</b> {client.telegram_id}\n"
+            f"<b>referrer_id:</b> {client.referrer_id or '❌ НЕТ'}\n"
+        )
+        
+        if referrer:
+            text += f"<b>Реферер:</b> @{referrer.username or referrer.first_name} (ID: {referrer.id})"
+        else:
+            text += f"<b>Реферер:</b> ❌ не найден"
+        
+        await message.answer(text)
+
+
+# ========================
+# КОМАНДА /deluser (УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ)
+# ========================
+
+@router.message(Command("deluser"))
+async def delete_user(message: types.Message):
+    """Полное удаление клиента и всех его данных (для админов)."""
+    if not is_admin(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("📝 Использование: /deluser [ID клиента]")
+        return
+
+    try:
+        user_id = int(args[1])
+    except ValueError:
+        await message.answer("❌ ID должен быть числом.")
+        return
+
+    async with async_session() as session:
+        client = await session.get(Client, user_id)
+        if not client:
+            await message.answer(f"❌ Клиент с ID {user_id} не найден.")
+            return
+        
+        username = client.username or client.first_name
+        
+        await message.answer(
+            f"⚠️ <b>Вы уверены, что хотите удалить клиента @{username} (ID: {user_id})?</b>\n\n"
+            f"Будут удалены:\n"
+            f"• Все подписки\n"
+            f"• Все платежи\n"
+            f"• Все события\n"
+            f"• Все реферальные связи\n\n"
+            f"Это действие <b>НЕЛЬЗЯ ОТМЕНИТЬ</b>!\n\n"
+            f"Для подтверждения введите: <code>/deluser_confirm {user_id}</code>"
+        )
+
+
+@router.message(Command("deluser_confirm"))
+async def delete_user_confirm(message: types.Message):
+    """Подтверждение удаления клиента."""
+    if not is_admin(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("📝 Использование: /deluser_confirm [ID клиента]")
+        return
+
+    try:
+        user_id = int(args[1])
+    except ValueError:
+        await message.answer("❌ ID должен быть числом.")
+        return
+
+    async with async_session() as session:
+        client = await session.get(Client, user_id)
+        if not client:
+            await message.answer(f"❌ Клиент с ID {user_id} не найден.")
+            return
+        
+        username = client.username or client.first_name
+        
+        # Удаляем все связанные записи
+        # 1. Подписки
+        await session.execute(
+            text("DELETE FROM subscriptions WHERE client_id = :uid"),
+            {"uid": user_id}
+        )
+        
+        # 2. Платежи
+        await session.execute(
+            text("DELETE FROM payments WHERE client_id = :uid"),
+            {"uid": user_id}
+        )
+        
+        # 3. События
+        await session.execute(
+            text("DELETE FROM event_log WHERE client_id = :uid"),
+            {"uid": user_id}
+        )
+        
+        # 4. Трафик (если есть)
+        await session.execute(
+            text("DELETE FROM traffic_log WHERE client_id = :uid"),
+            {"uid": user_id}
+        )
+        
+        # 5. Рефералы (где этот клиент был реферером или рефералом)
+        await session.execute(
+            text("DELETE FROM referrals WHERE referrer_id = :uid OR referred_id = :uid"),
+            {"uid": user_id}
+        )
+        
+        # 6. Роутеры (если есть)
+        await session.execute(
+            text("DELETE FROM routers WHERE client_id = :uid"),
+            {"uid": user_id}
+        )
+        
+        # Удаляем самого клиента
+        await session.delete(client)
+        await session.commit()
+
+    await message.answer(f"✅ Клиент @{username} (ID: {user_id}) и все его данные удалены.")
+
+
+# ========================
 # СПИСОК КЛИЕНТОВ
 # ========================
 
