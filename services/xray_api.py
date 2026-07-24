@@ -63,6 +63,9 @@ class XRayAPI:
             logger.info(f"3x-ui GET: {url}")
             resp = await session.get(url, cookies=self._cookies)
             logger.info(f"3x-ui Response: {resp.status_code}")
+            
+            # Логируем ответ для отладки
+            logger.info(f"3x-ui Response text: {resp.text[:500] if resp.text else 'empty'}")
 
             if resp.status_code == 401:
                 # Сессия истекла, пробуем перелогиниться
@@ -101,8 +104,17 @@ class XRayAPI:
 
     async def check_health(self) -> bool:
         """Публичный метод проверки доступности 3x-ui."""
-        data = await self._api_get("/panel/api/inbounds/list")
-        return data and data.get("success", False)
+        try:
+            data = await self._api_get("/panel/api/inbounds/list")
+            if data and data.get("success"):
+                logger.info("3x-ui health check: OK")
+                return True
+            else:
+                logger.warning(f"3x-ui health check: failed - {data}")
+                return False
+        except Exception as e:
+            logger.error(f"3x-ui health check: error - {e}")
+            return False
 
     async def _get_inbound(self) -> dict | None:
         """Получить информацию о inbound."""
