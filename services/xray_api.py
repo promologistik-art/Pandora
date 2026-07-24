@@ -10,100 +10,85 @@ logger = logging.getLogger(__name__)
 class XRayAPI:
     def __init__(self):
         self.base_url = config.XUI_HOST.rstrip("/")
-        self.username = config.XUI_USERNAME
-        self.password = config.XUI_PASSWORD
+        self.api_token = getattr(config, 'XUI_API_TOKEN', None)
         self._session: httpx.AsyncClient | None = None
-        self._cookies: dict | None = None
 
     async def _get_session(self) -> httpx.AsyncClient:
         if self._session is None:
             self._session = httpx.AsyncClient(verify=False, timeout=30.0)
         return self._session
 
-    async def login(self) -> bool:
-        """Авторизация в 3x-ui через Cookie."""
-        try:
-            session = await self._get_session()
-            login_data = {
-                "username": self.username,
-                "password": self.password
-            }
-            url = f"{self.base_url}/login"
-            logger.info(f"3x-ui LOGIN: {url}")
-
-            resp = await session.post(url, json=login_data)
-            logger.info(f"3x-ui Login Response: {resp.status_code}")
-
-            if resp.status_code == 200:
-                # Сохраняем cookies для дальнейших запросов
-                self._cookies = dict(resp.cookies)
-                logger.info("3x-ui: авторизация успешна")
-                return True
-            else:
-                logger.error(f"3x-ui: ошибка авторизации - {resp.text}")
-                return False
-        except Exception as e:
-            logger.error(f"3x-ui: ошибка при авторизации - {e}")
-            return False
-
-    async def _ensure_auth(self) -> bool:
-        """Проверяет авторизацию и перелогинивается при необходимости."""
-        if not self._cookies:
-            return await self.login()
-        return True
-
     async def _api_get(self, path: str) -> dict | None:
-        """Приватный метод GET запроса."""
-        if not await self._ensure_auth():
+        """GET запрос с Bearer-токеном."""
+        if not self.api_token:
+            logger.error("3x-ui: API-токен не настроен! Добавьте XUI_API_TOKEN в .env")
             return None
 
         session = await self._get_session()
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Accept": "application/json"
+        }
         try:
             url = f"{self.base_url}{path}"
             logger.info(f"3x-ui GET: {url}")
-            resp = await session.get(url, cookies=self._cookies)
+            resp = await session.get(url, headers=headers)
             logger.info(f"3x-ui Response: {resp.status_code}")
             
-            # Логируем ответ для отладки
-            logger.info(f"3x-ui Response text: {resp.text[:500] if resp.text else 'empty'}")
-
+            if resp.status_code == 403:
+                logger.error("3x-ui: 403 Forbidden — неверный API-токен или недостаточно прав")
+                return None
             if resp.status_code == 401:
-                # Сессия истекла, пробуем перелогиниться
-                logger.warning("3x-ui: сессия истекла, пробуем перелогиниться")
-                if await self.login():
-                    resp = await session.get(url, cookies=self._cookies)
+                logger.error("3x-ui: 401 Unauthorized — токен недействителен")
+                return None
 
             resp.raise_for_status()
             return resp.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"3x-ui: HTTP ошибка {path} - {e.response.status_code}")
+            logger.error(f"3x-ui: response body: {e.response.text[:500]}")
+            return None
         except Exception as e:
             logger.error(f"3x-ui: ошибка GET {path} - {e}")
             return None
 
     async def _api_post(self, path: str, json_data: dict) -> dict | None:
-        """Приватный метод POST запроса."""
-        if not await self._ensure_auth():
+        """POST запрос с Bearer-токеном."""
+        if not self.api_token:
+            logger.error("3x-ui: API-токен не настроен! Добавьте XUI_API_TOKEN в .env")
             return None
 
         session = await self._get_session()
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
         try:
             url = f"{self.base_url}{path}"
             logger.info(f"3x-ui POST: {url}")
-            resp = await session.post(url, json=json_data, cookies=self._cookies)
+            resp = await session.post(url, json=json_data, headers=headers)
             logger.info(f"3x-ui Response: {resp.status_code}")
 
+            if resp.status_code == 403:
+                logger.error("3x-ui: 403 Forbidden — неверный API-токен или недостаточно прав")
+                return None
             if resp.status_code == 401:
-                logger.warning("3x-ui: сессия истекла, пробуем перелогиниться")
-                if await self.login():
-                    resp = await session.post(url, json=json_data, cookies=self._cookies)
+                logger.error("3x-ui: 401 Unauthorized — токен недействителен")
+                return None
 
             resp.raise_for_status()
             return resp.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"3x-ui: HTTP ошибка {path} - {e.response.status_code}")
+            logger.error(f"3x-ui: response body: {e.response.text[:500]}")
+            return None
         except Exception as e:
             logger.error(f"3x-ui: ошибка POST {path} - {e}")
             return None
 
     async def check_health(self) -> bool:
-        """Публичный метод проверки доступности 3x-ui."""
+        """Проверка доступности 3x-ui."""
         try:
             data = await self._api_get("/panel/api/inbounds/list")
             if data and data.get("success"):
