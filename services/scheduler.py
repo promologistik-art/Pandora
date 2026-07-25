@@ -191,7 +191,7 @@ async def monitor_server(bot: Bot):
 async def start_scheduler(bot: Bot):
     scheduler.add_job(
         check_expiring_subscriptions,
-        CronTrigger(hour=10, minute=0),
+        CronTrigger(hour=5, minute=0),  # 5:00 UTC = 9:00 МСК (UTC+4)
         args=[bot],
         id="check_expiring",
         replace_existing=True,
@@ -199,7 +199,7 @@ async def start_scheduler(bot: Bot):
 
     scheduler.add_job(
         daily_report,
-        CronTrigger(hour=4, minute=0),
+        CronTrigger(hour=4, minute=0),  # 4:00 UTC = 8:00 МСК (UTC+4)
         args=[bot],
         id="daily_report",
         replace_existing=True,
