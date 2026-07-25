@@ -101,7 +101,6 @@ async def show_all_referrals(message: types.Message):
         return
 
     async with async_session() as session:
-        # Получаем всех клиентов у которых есть referrer_id
         result = await session.execute(
             select(Client)
             .where(Client.referrer_id.isnot(None))
@@ -113,15 +112,12 @@ async def show_all_referrals(message: types.Message):
             await message.answer("📭 Нет зарегистрированных рефералов.")
             return
         
-        # Собираем статистику по рефералам
         text = "<b>📊 Статистика рефералов</b>\n\n"
         
         for client in referred_clients:
-            # Находим реферера
             referrer = await session.get(Client, client.referrer_id)
             referrer_name = f"@{referrer.username or referrer.first_name}" if referrer else "❌ УДАЛЁН"
             
-            # Проверяем, был ли начислен бонус
             referral_record = await session.execute(
                 select(Referral)
                 .where(Referral.referred_id == client.id)
@@ -129,7 +125,6 @@ async def show_all_referrals(message: types.Message):
             )
             referral = referral_record.scalar_one_or_none()
             
-            # Проверяем, есть ли активная подписка у реферала
             has_active_sub = await get_active_subscription(client.id) is not None
             
             status_emoji = "✅" if has_active_sub else "❌"
@@ -143,7 +138,6 @@ async def show_all_referrals(message: types.Message):
                 f"   ID: {client.id} | Telegram: {client.telegram_id}\n\n"
             )
         
-        # Общая статистика
         total = len(referred_clients)
         with_bonus = await session.scalar(
             select(func.count(Referral.id)).where(Referral.bonus_applied == True)
@@ -377,7 +371,6 @@ async def delete_user_confirm(message: types.Message):
         
         username = client.username or client.first_name
         
-        # Удаляем все связанные записи
         await session.execute(
             text("DELETE FROM subscriptions WHERE client_id = :uid"),
             {"uid": user_id}
@@ -407,7 +400,6 @@ async def delete_user_confirm(message: types.Message):
             {"uid": user_id}
         )
         
-        # Удаляем самого клиента
         await session.execute(
             text("DELETE FROM clients WHERE id = :uid"),
             {"uid": user_id}
@@ -644,7 +636,6 @@ async def delete_user_confirm_callback(callback: types.CallbackQuery):
 
         username = client.username or client.first_name
 
-        # Удаляем все связанные записи
         await session.execute(
             text("DELETE FROM subscriptions WHERE client_id = :uid"),
             {"uid": client_id}
@@ -674,7 +665,6 @@ async def delete_user_confirm_callback(callback: types.CallbackQuery):
             {"uid": client_id}
         )
 
-        # Удаляем самого клиента
         await session.execute(
             text("DELETE FROM clients WHERE id = :uid"),
             {"uid": client_id}
@@ -782,7 +772,6 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
         if sub:
             sub.expires_at = sub.expires_at + timedelta(days=days)
         else:
-            # Создаём подписку в БД
             sub = Subscription(
                 client_id=client.id,
                 started_at=date.today(),
@@ -790,9 +779,17 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
                 plan="1month",
             )
             session.add(sub)
+            await session.flush()
             
-            # Если это @Bpesr — создаём клиента в 3x-ui
-            if client.username == "Bpesr":
+            # Проверка UUID
+            if not sub.xray_uuid or len(sub.xray_uuid) < 36:
+                import uuid
+                sub.xray_uuid = str(uuid.uuid4())
+                logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
+            
+            # Создание клиента в 3x-ui для @Bpesr
+            if client.telegram_id == 7412453740 or client.username == "Bpesr":
+                logger.info(f"✅ СОЗДАЕМ КЛИЕНТА В 3X-UI для @{client.username} (ID: {client.id})")
                 xray_result = await xray.add_client(
                     email=f"client_{client.id}",
                     uuid=sub.xray_uuid,
@@ -802,18 +799,19 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
                     link = await xray.get_client_link(f"client_{client.id}")
                     if link:
                         sub.sub_link = link
+                        logger.info(f"✅ Ссылка получена через API: {link}")
                     else:
-                        # Если не удалось получить ссылку — используем старую схему
                         sub_link = await get_free_sub_link(session)
                         sub.sub_link = sub_link
+                        logger.warning("⚠️ Ссылка через API не получена, использована SUB_LINKS")
                 else:
-                    # Если не удалось создать клиента — используем старую схему
                     sub_link = await get_free_sub_link(session)
                     sub.sub_link = sub_link
+                    logger.error("❌ Не удалось создать клиента в 3x-ui, использована SUB_LINKS")
             else:
-                # Старая схема для всех остальных
                 sub_link = await get_free_sub_link(session)
                 sub.sub_link = sub_link
+                logger.info(f"❌ Старая схема для клиента {client.id}")
 
         event = EventLog(
             client_id=client.id,
@@ -1273,26 +1271,17 @@ async def server_status(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    from services.xray_api import xray
-
-    try:
-        if await xray.check_health():
-            await callback.message.answer(
-                "<b>🖥 Статус сервера</b>\n\n"
-                "3x-ui: <b>✅ онлайн</b>\n"
-                f"Адрес: {config.XUI_HOST}"
-            )
-        else:
-            await callback.message.answer(
-                "<b>🖥 Статус сервера</b>\n\n"
-                "3x-ui: <b>❌ недоступен</b>\n"
-                f"Адрес: {config.XUI_HOST}"
-            )
-    except Exception as e:
+    if await xray.check_health():
         await callback.message.answer(
             "<b>🖥 Статус сервера</b>\n\n"
-            f"3x-ui: <b>❌ ошибка</b>\n"
-            f"{e}"
+            "3x-ui: <b>✅ онлайн</b>\n"
+            f"Адрес: {config.XUI_HOST}"
+        )
+    else:
+        await callback.message.answer(
+            "<b>🖥 Статус сервера</b>\n\n"
+            "3x-ui: <b>❌ недоступен</b>\n"
+            f"Адрес: {config.XUI_HOST}"
         )
     await callback.answer()
 
@@ -1411,16 +1400,13 @@ async def payment_confirm_final(callback: types.CallbackQuery):
 
         tariff = config.TARIFFS.get(tariff_key, config.TARIFFS["1month"])
 
-        # Проверяем существующую подписку
         existing_sub = await get_active_subscription(client.id)
         
         if existing_sub:
-            # Продлеваем существующую
             existing_sub.expires_at = existing_sub.expires_at + timedelta(days=tariff["days"])
             existing_sub.plan = tariff_key
             sub = existing_sub
         else:
-            # Создаём новую подписку
             sub = Subscription(
                 client_id=client.id,
                 started_at=date.today(),
@@ -1428,12 +1414,17 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                 plan=tariff_key,
             )
             session.add(sub)
+            await session.flush()
             
-            # ========================================
-            # СОЗДАНИЕ КЛИЕНТА В 3X-UI (ТОЛЬКО ДЛЯ @Bpesr)
-            # ========================================
-            if client.username == "Bpesr":
-                logger.info(f"Создаём клиента в 3x-ui для @{client.username}")
+            # Проверка UUID
+            if not sub.xray_uuid or len(sub.xray_uuid) < 36:
+                import uuid
+                sub.xray_uuid = str(uuid.uuid4())
+                logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
+
+            # Создание клиента в 3x-ui для @Bpesr
+            if client.telegram_id == 7412453740 or client.username == "Bpesr":
+                logger.info(f"✅ СОЗДАЕМ КЛИЕНТА В 3X-UI для @{client.username} (ID: {client.id})")
                 xray_result = await xray.add_client(
                     email=f"client_{client.id}",
                     uuid=sub.xray_uuid,
@@ -1443,23 +1434,20 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                     link = await xray.get_client_link(f"client_{client.id}")
                     if link:
                         sub.sub_link = link
-                        logger.info(f"Ссылка для @{client.username} получена через API")
+                        logger.info(f"✅ Ссылка получена через API: {link}")
                     else:
-                        # Если не удалось получить ссылку через API — берём из пула
                         sub_link = await get_free_sub_link(session)
                         sub.sub_link = sub_link
-                        logger.info(f"Ссылка для @{client.username} взята из SUB_LINKS")
+                        logger.warning("⚠️ Ссылка через API не получена, использована SUB_LINKS")
                 else:
-                    # Если не удалось создать клиента — берём из пула
                     sub_link = await get_free_sub_link(session)
                     sub.sub_link = sub_link
-                    logger.warning(f"Не удалось создать клиента в 3x-ui для @{client.username}, использована SUB_LINKS")
+                    logger.error("❌ Не удалось создать клиента в 3x-ui, использована SUB_LINKS")
             else:
-                # Старая схема для всех остальных
                 sub_link = await get_free_sub_link(session)
                 sub.sub_link = sub_link
+                logger.info(f"❌ Старая схема для клиента {client.id}")
 
-        # Логируем событие
         event = EventLog(
             client_id=client.id,
             event_type="payment_confirmed",
@@ -1468,9 +1456,7 @@ async def payment_confirm_final(callback: types.CallbackQuery):
         session.add(event)
         await session.commit()
 
-        # ========================================
-        # РЕФЕРАЛЬНАЯ ПРОГРАММА
-        # ========================================
+        # Реферальная программа
         if client.referrer_id:
             existing_referral = await session.execute(
                 select(Referral).where(Referral.referred_id == client.id)
@@ -1503,7 +1489,6 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                     except Exception as e:
                         logger.error(f"Не удалось уведомить реферера {client.referrer_id}: {e}")
 
-    # Уведомляем клиента
     try:
         await callback.bot.send_message(
             client.telegram_id,

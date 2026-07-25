@@ -259,7 +259,7 @@ async def cmd_start(message: types.Message):
                 logger.warning(f"Реферер с ID {ref_arg} не найден")
 
     # ========================================
-    # 4. ПРИВЕТСТВИЕ (вне сессии) - ИСПРАВЛЕН ТЕКСТ
+    # 4. ПРИВЕТСТВИЕ (вне сессии)
     # ========================================
     welcome = (
         "<b>📦 Ящик Пандоры</b> — стабильный VPN с умной маршрутизацией.\n"
@@ -337,6 +337,16 @@ async def trial_start(callback: types.CallbackQuery):
             is_trial=True,
         )
         session.add(sub)
+        await session.flush()
+
+        # ========================================
+        # ПРОВЕРКА UUID — ЕСЛИ ПУСТОЙ, ГЕНЕРИРУЕМ
+        # ========================================
+        if not sub.xray_uuid or len(sub.xray_uuid) < 36:
+            import uuid
+            sub.xray_uuid = str(uuid.uuid4())
+            logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
+            await session.commit()
 
         # ========================================
         # СОЗДАНИЕ КЛИЕНТА В 3X-UI ДЛЯ ТРИАЛА (ТОЛЬКО ДЛЯ @Bpesr)
@@ -586,7 +596,6 @@ async def show_invite(message: types.Message):
         )
         return
 
-    # Новый формат ссылки с подчёркиванием
     ref_link = f"https://t.me/{config.BOT_USERNAME}?start=ref_{client.id}"
 
     await message.answer(
