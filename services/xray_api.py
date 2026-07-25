@@ -190,16 +190,23 @@ class XRayAPI:
         return None
 
     async def get_client_link(self, email: str) -> str | None:
-        """Получить ссылку на клиента из 3x-ui."""
+        """Получить ссылку на клиента (собираем вручную)."""
         try:
-            data = await self._api_get(f"/panel/api/inbounds/get/{config.XUI_INBOUND_ID}/client/{email}/link")
-            if data and data.get("success"):
-                return data.get("obj")
+            # Берём первую ссылку из SUB_LINKS как шаблон
+            if config.SUB_LINKS and len(config.SUB_LINKS) > 0:
+                template = config.SUB_LINKS[0]
+                # Извлекаем базовый URL: https://dashoguz.mooo.com:2096/sub/
+                base = "/".join(template.split("/")[:-1])
+                link = f"{base}/{email}"
+                logger.info(f"3x-ui: сгенерирована ссылка для {email}: {link}")
+                return link
             else:
-                logger.warning(f"3x-ui: не удалось получить ссылку для {email}")
-                return None
+                # Если SUB_LINKS нет — используем прямой шаблон
+                link = f"https://dashoguz.mooo.com:2096/sub/{email}"
+                logger.info(f"3x-ui: сгенерирована ссылка (запасной вариант) для {email}: {link}")
+                return link
         except Exception as e:
-            logger.error(f"3x-ui: ошибка получения ссылки для {email} - {e}")
+            logger.error(f"3x-ui: ошибка генерации ссылки для {email} - {e}")
             return None
 
     async def remove_client(self, uuid: str) -> bool:
