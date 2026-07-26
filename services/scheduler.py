@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from datetime import date, timedelta, datetime
 
 from aiogram import Bot
@@ -18,13 +19,31 @@ scheduler = AsyncIOScheduler()
 
 
 # ============================================================
-# Задача 1: Сбор трафика за вчерашний день
+# Задача 1: Сбор трафика за вчерашний день (С ПОВТОРНЫМИ ПОПЫТКАМИ)
 # ============================================================
+
+async def collect_traffic_with_retry(max_retries: int = 3, delay: int = 10):
+    """Собирает трафик клиентов за вчерашний день с повторными попытками."""
+    yesterday = date.today() - timedelta(days=1)
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Попытка {attempt+1}/{max_retries} сбора трафика за {yesterday}")
+            await collect_traffic()
+            logger.info(f"✅ Сбор трафика за {yesterday} успешно завершён")
+            return
+        except Exception as e:
+            logger.warning(f"⚠️ Попытка {attempt+1}/{max_retries} не удалась: {e}")
+            if attempt < max_retries - 1:
+                logger.info(f"⏳ Повторная попытка через {delay} секунд...")
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"❌ Не удалось собрать трафик после {max_retries} попыток")
+
 
 async def collect_traffic():
     """Собирает трафик клиентов за вчерашний день."""
     yesterday = date.today() - timedelta(days=1)
-    logger.info(f"Начинаем сбор трафика за {yesterday}")
     
     async with async_session() as session:
         # Получаем всех клиентов с активной подпиской
@@ -325,10 +344,11 @@ async def monitor_server(bot: Bot):
 # ============================================================
 
 async def start_scheduler(bot: Bot):
-    # 1. Сбор трафика — в 3:00 ночи (чтобы данные за вчера уже были)
+    # 1. Сбор трафика — в 3:00 ночи (с повторными попытками)
     scheduler.add_job(
-        collect_traffic,
+        collect_traffic_with_retry,
         CronTrigger(hour=3, minute=0),  # 3:00 UTC = 7:00 МСК
+        args=[3, 10],  # 3 попытки, интервал 10 секунд
         id="collect_traffic",
         replace_existing=True,
     )
@@ -365,5 +385,5 @@ async def start_scheduler(bot: Bot):
 
 
 async def stop_scheduler():
-    scheduler.shutdown()
     logger.info("Планировщик остановлен")
+    scheduler.shutdown()
