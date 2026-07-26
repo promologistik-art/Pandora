@@ -11,7 +11,7 @@ from sqlalchemy import select, func, text
 
 from config import config
 from database.engine import async_session
-from database.models import Client, Subscription, Payment, EventLog, Referral, TrafficLog
+from database.models import Client, Subscription, Payment, EventLog, Referral
 from services.client_service import (
     get_or_create_client, get_active_subscription,
     is_admin, get_free_sub_link
@@ -106,7 +106,6 @@ async def clean_logs_command(message: types.Message):
     try:
         results = await full_cleanup()
         
-        # Формируем отчёт
         success_count = sum(1 for _, r in results if r)
         total_count = len(results)
         
@@ -1292,12 +1291,12 @@ async def show_stats(callback: types.CallbackQuery):
 
 
 # ========================
-# СТАТУС СЕРВЕРА (РАСШИРЕННЫЙ)
+# СТАТУС СЕРВЕРА
 # ========================
 
 @router.callback_query(F.data == "admin:server")
 async def server_status(callback: types.CallbackQuery):
-    """Расширенный статус сервера с данными из 3x-ui и трафиком за сегодня."""
+    """Статус сервера с данными из 3x-ui."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
@@ -1307,12 +1306,6 @@ async def server_status(callback: types.CallbackQuery):
         
         clients_total = 0
         clients_online = 0
-        traffic_up = 0
-        traffic_down = 0
-        up_speed = 0
-        down_speed = 0
-        xray_uptime = "неизвестно"
-        memory_used = 0
         cpu_percent = 0
         ram_percent = 0
         disk_percent = 0
@@ -1322,10 +1315,6 @@ async def server_status(callback: types.CallbackQuery):
             data = await xray._api_get("/panel/api/inbounds/list")
             if data and data.get("success"):
                 for inbound in data.get("obj", []):
-                    traffic_up += inbound.get("up", 0)
-                    traffic_down += inbound.get("down", 0)
-                    up_speed += inbound.get("upSpeed", 0)
-                    down_speed += inbound.get("downSpeed", 0)
                     for client in inbound.get("clientStats", []):
                         clients_total += 1
                         last_online = client.get("lastOnline", 0)
@@ -1340,11 +1329,6 @@ async def server_status(callback: types.CallbackQuery):
                 status_data = await xray._api_get("/panel/api/server/status")
                 if status_data and status_data.get("success"):
                     obj = status_data.get("obj", {})
-                    xray_uptime = obj.get("uptime", "неизвестно")
-                    
-                    # Память Xray (appStats)
-                    app_stats = obj.get("appStats", {})
-                    memory_used = app_stats.get("mem", 0) // (1024 * 1024)
                     
                     # CPU
                     cpu_percent = obj.get("cpu", 0)
@@ -1359,76 +1343,18 @@ async def server_status(callback: types.CallbackQuery):
                     if disk.get("total", 0) > 0:
                         disk_percent = (disk.get("current", 0) / disk.get("total", 1)) * 100
                     
-                    # Xray state
+                    # Xray state (логируем, если не running)
                     xray_state = obj.get("xray", {}).get("state", "unknown")
                     if xray_state != "running":
                         logger.warning(f"Xray state: {xray_state}")
             except Exception as e:
                 logger.warning(f"Не удалось получить системную статистику: {e}")
         
-        # ========================================
-        # ТРАФИК ЗА СЕГОДНЯ ИЗ TrafficLog
-        # ========================================
-        today = date.today()
-        upload_today = 0
-        download_today = 0
-        
-        async with async_session() as session:
-            today_traffic = await session.execute(
-                select(
-                    func.sum(TrafficLog.upload_bytes).label("upload"),
-                    func.sum(TrafficLog.download_bytes).label("download")
-                )
-                .where(TrafficLog.date == today)
-            )
-            traffic_data = today_traffic.one()
-            upload_today = traffic_data.upload // (1024 * 1024) if traffic_data.upload else 0
-            download_today = traffic_data.download // (1024 * 1024) if traffic_data.download else 0
-        
-        def format_bytes(bytes_val):
-            if bytes_val > 1024**3:
-                return f"{bytes_val / (1024**3):.1f} GB"
-            elif bytes_val > 1024**2:
-                return f"{bytes_val / (1024**2):.1f} MB"
-            else:
-                return f"{bytes_val / 1024:.1f} KB"
-        
-        def format_speed(bytes_val):
-            if bytes_val > 1024**2:
-                return f"{bytes_val / (1024**2):.1f} MB/s"
-            elif bytes_val > 1024:
-                return f"{bytes_val / 1024:.1f} KB/s"
-            else:
-                return f"{bytes_val:.0f} B/s"
-        
         status_text = (
             f"<b>🖥 Статус сервера</b>\n\n"
-            f"📡 3x-ui: <b>{'✅ онлайн' if is_online else '❌ недоступен'}</b>\n"
-            f"👥 Клиенты: <b>{clients_online}</b> в сети / {clients_total} всего\n"
-            f"📥 Трафик всего: {format_bytes(traffic_up)} ↑ / {format_bytes(traffic_down)} ↓\n"
+            f"3x-ui: <b>{'✅ онлайн' if is_online else '❌ недоступен'}</b>\n"
+            f"Клиенты: <b>{clients_online}</b> в сети / {clients_total} всего\n"
         )
-        
-        # Трафик за сегодня
-        if upload_today > 0 or download_today > 0:
-            status_text += f"📊 Трафик за сегодня: {upload_today} MB ↑ / {download_today} MB ↓\n"
-        
-        # Текущая скорость
-        if up_speed > 0 or down_speed > 0:
-            status_text += f"⚡ Текущая скорость: {format_speed(up_speed)} ↑ / {format_speed(down_speed)} ↓\n"
-        
-        if xray_uptime != "неизвестно":
-            uptime_seconds = xray_uptime
-            days = uptime_seconds // 86400
-            hours = (uptime_seconds % 86400) // 3600
-            minutes = (uptime_seconds % 3600) // 60
-            if days > 0:
-                uptime_str = f"{days}д {hours}ч {minutes}м"
-            else:
-                uptime_str = f"{hours}ч {minutes}м"
-            status_text += f"⏱ Xray: {uptime_str}\n"
-        
-        if memory_used > 0:
-            status_text += f"💾 Память Xray: {memory_used} MB\n"
         
         # Системная статистика с VPS
         if cpu_percent > 0 or ram_percent > 0 or disk_percent > 0:
@@ -1665,7 +1591,7 @@ async def payment_confirm_final(callback: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Не удалось уведомить клиента {client.id}: {e}")
 
-    await callback.message.edit_text(f"✅ Платёж #{payment_id} подтверждён на {amount} руб. Клиент уведомлён.")
+    await callback.message.edit_text(f"✅ Платёж #{payment_id} подтверждён на {amount} руб. Клиент уведомлен.")
     await callback.answer()
 
 
