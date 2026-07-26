@@ -789,6 +789,7 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             
             if client.telegram_id == 7412453740 or client.username == "Bpesr":
                 logger.info(f"✅ СОЗДАЕМ КЛИЕНТА В 3X-UI для @{client.username} (ID: {client.id})")
+                from services.xray_api import xray
                 xray_result = await xray.add_client(
                     email=f"client_{client.id}",
                     uuid=sub.xray_uuid,
@@ -1266,7 +1267,7 @@ async def show_stats(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "admin:server")
 async def server_status(callback: types.CallbackQuery):
-    """Расширенный статус сервера с системной статистикой."""
+    """Расширенный статус сервера с данными из 3x-ui."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
@@ -1275,44 +1276,65 @@ async def server_status(callback: types.CallbackQuery):
         # Проверяем 3x-ui
         is_online = await xray.check_health()
         
-        # Получаем системную статистику
-        stats = await get_system_stats()
-        
-        # Получаем количество активных клиентов и трафик
+        # Получаем данные из 3x-ui
         clients_count = 0
-        traffic_total = 0
+        traffic_up = 0
+        traffic_down = 0
+        xray_uptime = "неизвестно"
+        memory_used = 0
+        
         if is_online:
             data = await xray._api_get("/panel/api/inbounds/list")
             if data and data.get("success"):
                 for inbound in data.get("obj", []):
                     for client in inbound.get("clientStats", []):
                         clients_count += 1
-                        traffic_total += client.get("up", 0) + client.get("down", 0)
+                        traffic_up += client.get("up", 0)
+                        traffic_down += client.get("down", 0)
+                
+                # Пытаемся получить uptime Xray из системной информации
+                try:
+                    sys_info = await xray._api_get("/panel/api/status")
+                    if sys_info and sys_info.get("success"):
+                        xray_uptime = sys_info.get("obj", {}).get("uptime", "неизвестно")
+                        memory_used = sys_info.get("obj", {}).get("memory", 0)
+                except:
+                    pass
         
-        traffic_mb = traffic_total // (1024 * 1024)
-        traffic_gb = traffic_mb // 1024
-        if traffic_gb > 0:
-            traffic_str = f"{traffic_gb} GB"
-        else:
-            traffic_str = f"{traffic_mb} MB"
+        # Форматируем трафик в человеческий вид
+        def format_bytes(bytes_val):
+            if bytes_val > 1024**3:
+                return f"{bytes_val / (1024**3):.1f} GB"
+            elif bytes_val > 1024**2:
+                return f"{bytes_val / (1024**2):.1f} MB"
+            else:
+                return f"{bytes_val / 1024:.1f} KB"
+        
+        # Получаем системную статистику для справки
+        stats = await get_system_stats()
         
         status_text = (
             f"<b>🖥 Статус сервера</b>\n\n"
             f"📡 3x-ui: <b>{'✅ онлайн' if is_online else '❌ недоступен'}</b>\n"
             f"📊 Активных клиентов: {clients_count}\n"
-            f"📥 Трафик всего: {traffic_str}\n"
+            f"📥 Трафик (всего): {format_bytes(traffic_up)} ↑ / {format_bytes(traffic_down)} ↓\n"
         )
         
-        if stats:
-            status_text += (
-                f"\n<b>💻 Система:</b>\n"
-                f"📈 CPU: {stats['cpu']:.1f}%\n"
-                f"💾 RAM: {stats['ram']:.0f}% ({stats['ram_used']} MB / {stats['ram_total']} MB)\n"
-                f"💿 Диск: {stats['disk']:.0f}% ({stats['disk_used']} GB / {stats['disk_total']} GB)\n"
-                f"🕐 Uptime: {stats['uptime']}\n"
-            )
+        if xray_uptime != "неизвестно":
+            status_text += f"⏱ Xray: {xray_uptime}\n"
+        
+        if memory_used > 0:
+            status_text += f"💾 Память Xray: {memory_used} MB\n"
         
         status_text += f"\n🌐 Панель: {config.XUI_HOST}"
+        
+        # Добавляем краткую системную информацию (не перегружая)
+        if stats:
+            status_text += (
+                f"\n\n<b>💻 Сервер:</b>\n"
+                f"CPU: {stats['cpu']:.0f}% | RAM: {stats['ram']:.0f}% | Диск: {stats['disk']:.0f}%\n"
+                f"Uptime: {stats['uptime']}"
+            )
         
         await callback.message.answer(status_text)
         
