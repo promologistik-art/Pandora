@@ -820,7 +820,6 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             
             if client.telegram_id == 7412453740 or client.username == "Bpesr":
                 logger.info(f"✅ СОЗДАЕМ КЛИЕНТА В 3X-UI для @{client.username} (ID: {client.id})")
-                from services.xray_api import xray
                 xray_result = await xray.add_client(
                     email=f"client_{client.id}",
                     uuid=sub.xray_uuid,
@@ -1336,24 +1335,36 @@ async def server_status(callback: types.CallbackQuery):
                             if datetime.now() - last_time < timedelta(minutes=5):
                                 clients_online += 1
             
-            # Получаем системную статистику с VPS через 3x-ui
+            # Получаем системную статистику с VPS
             try:
-                status_data = await xray._api_get("/panel/api/status")
+                status_data = await xray._api_get("/panel/api/server/status")
                 if status_data and status_data.get("success"):
                     obj = status_data.get("obj", {})
                     xray_uptime = obj.get("uptime", "неизвестно")
-                    memory_used = obj.get("memory", 0)
+                    
+                    # Память Xray (appStats)
+                    app_stats = obj.get("appStats", {})
+                    memory_used = app_stats.get("mem", 0) // (1024 * 1024)  # Переводим в MB
+                    
+                    # CPU
                     cpu_percent = obj.get("cpu", 0)
-                    ram_percent = obj.get("ram", 0)
-                    disk_percent = obj.get("disk", 0)
+                    
+                    # RAM
+                    mem = obj.get("mem", {})
+                    if mem.get("total", 0) > 0:
+                        ram_percent = (mem.get("current", 0) / mem.get("total", 1)) * 100
+                    
+                    # Диск
+                    disk = obj.get("disk", {})
+                    if disk.get("total", 0) > 0:
+                        disk_percent = (disk.get("current", 0) / disk.get("total", 1)) * 100
+                    
+                    # Xray state
+                    xray_state = obj.get("xray", {}).get("state", "unknown")
+                    if xray_state != "running":
+                        logger.warning(f"Xray state: {xray_state}")
                 else:
-                    # Пробуем альтернативный эндпоинт
-                    sys_status = await xray._api_get("/panel/api/system/status")
-                    if sys_status and sys_status.get("success"):
-                        obj = sys_status.get("obj", {})
-                        cpu_percent = obj.get("cpu", 0)
-                        ram_percent = obj.get("ram", 0)
-                        disk_percent = obj.get("disk", 0)
+                    logger.warning("Не удалось получить системную статистику: status_data is None or not success")
             except Exception as e:
                 logger.warning(f"Не удалось получить системную статистику: {e}")
         
@@ -1384,7 +1395,16 @@ async def server_status(callback: types.CallbackQuery):
             status_text += f"⚡ Скорость: {format_speed(up_speed)} ↑ / {format_speed(down_speed)} ↓\n"
         
         if xray_uptime != "неизвестно":
-            status_text += f"⏱ Xray: {xray_uptime}\n"
+            # Конвертируем секунды в дни/часы/минуты
+            uptime_seconds = xray_uptime
+            days = uptime_seconds // 86400
+            hours = (uptime_seconds % 86400) // 3600
+            minutes = (uptime_seconds % 3600) // 60
+            if days > 0:
+                uptime_str = f"{days}д {hours}ч {minutes}м"
+            else:
+                uptime_str = f"{hours}ч {minutes}м"
+            status_text += f"⏱ Xray: {uptime_str}\n"
         
         if memory_used > 0:
             status_text += f"💾 Память Xray: {memory_used} MB\n"
