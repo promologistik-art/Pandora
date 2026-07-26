@@ -313,6 +313,24 @@ async def trial_start(callback: types.CallbackQuery):
         await callback.answer()
         return
 
+    # ========================================
+    # ПРОВЕРКА: БЫЛ ЛИ У ЮЗЕРА УЖЕ ТРИАЛ
+    # ========================================
+    async with async_session() as session:
+        used_trial = await session.execute(
+            select(Subscription)
+            .where(Subscription.client_id == client.id)
+            .where(Subscription.is_trial == True)
+        )
+        if used_trial.scalar_one_or_none():
+            await callback.message.answer(
+                "❌ <b>Вы уже использовали бесплатный триал.</b>\n\n"
+                "Выберите тариф для продления:",
+                reply_markup=tariff_keyboard()
+            )
+            await callback.answer()
+            return
+
     async with async_session() as session:
         result = await session.execute(
             select(func.count(Subscription.id))
@@ -435,11 +453,27 @@ async def show_status(message: types.Message):
     sub = await get_active_subscription(client.id)
 
     if sub is None:
-        await message.answer(
-            "❌ У вас нет активной подписки.\n"
-            "Попробуйте бесплатный триал или выберите тариф:",
-            reply_markup=main_keyboard()
-        )
+        # Проверяем, был ли у юзера уже триал
+        async with async_session() as session:
+            used_trial = await session.execute(
+                select(Subscription)
+                .where(Subscription.client_id == client.id)
+                .where(Subscription.is_trial == True)
+            )
+            has_used_trial = used_trial.scalar_one_or_none() is not None
+        
+        if has_used_trial:
+            await message.answer(
+                "❌ У вас нет активной подписки.\n\n"
+                "Выберите тариф для продления:",
+                reply_markup=tariff_keyboard()
+            )
+        else:
+            await message.answer(
+                "❌ У вас нет активной подписки.\n"
+                "Попробуйте бесплатный триал или выберите тариф:",
+                reply_markup=main_keyboard()
+            )
         return
 
     days_left = (sub.expires_at - date.today()).days

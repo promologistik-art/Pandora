@@ -20,6 +20,35 @@ scheduler = AsyncIOScheduler()
 
 
 # ============================================================
+# НОВАЯ ЗАДАЧА: ОЧИСТКА ORPHAN-КЛИЕНТОВ
+# ============================================================
+
+async def cleanup_orphan_clients():
+    """Удаляет клиентов из 3x-ui, у которых нет активной подписки."""
+    logger.info("🧹 Начинаем проверку orphan-клиентов в 3x-ui...")
+    
+    async with async_session() as session:
+        result = await session.execute(select(Client))
+        clients = result.scalars().all()
+        
+        removed_count = 0
+        for client in clients:
+            sub = await get_active_subscription(client.id)
+            if not sub and client.xray_uuid:
+                try:
+                    success = await xray.remove_client(client.xray_uuid)
+                    if success:
+                        logger.info(f"✅ Удалён orphan-клиент {client.id} (@{client.username}) из 3x-ui")
+                        removed_count += 1
+                    else:
+                        logger.info(f"ℹ️ Клиент {client.id} (@{client.username}) уже удалён из 3x-ui или не найден")
+                except Exception as e:
+                    logger.error(f"❌ Ошибка удаления клиента {client.id}: {e}")
+        
+        logger.info(f"🧹 Проверка orphan-клиентов завершена. Удалено: {removed_count}")
+
+
+# ============================================================
 # Задача 1: Сбор трафика за вчерашний день
 # ============================================================
 
@@ -320,7 +349,15 @@ async def monitor_server(bot: Bot):
 # ============================================================
 
 async def start_scheduler(bot: Bot):
-    # 1. Очистка системы — 1-го числа каждого месяца в 2:30 ночи
+    # 1. Очистка orphan-клиентов — каждый день в 3:30 ночи
+    scheduler.add_job(
+        cleanup_orphan_clients,
+        CronTrigger(hour=3, minute=30),
+        id="cleanup_orphan_clients",
+        replace_existing=True,
+    )
+
+    # 2. Очистка системы — 1-го числа каждого месяца в 2:30 ночи
     scheduler.add_job(
         full_cleanup,
         CronTrigger(day=1, hour=2, minute=30),
@@ -328,7 +365,7 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 2. Сбор трафика — в 3:00 (с повторными попытками)
+    # 3. Сбор трафика — в 3:00 (с повторными попытками)
     scheduler.add_job(
         collect_traffic_with_retry,
         CronTrigger(hour=3, minute=0),
@@ -337,7 +374,7 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 3. Напоминания об истечении — в 9:00 МСК
+    # 4. Напоминания об истечении — в 9:00 МСК
     scheduler.add_job(
         check_expiring_subscriptions,
         CronTrigger(hour=5, minute=0),
@@ -346,7 +383,7 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 4. Ежедневная сводка — в 8:00 МСК
+    # 5. Ежедневная сводка — в 8:00 МСК
     scheduler.add_job(
         daily_report,
         CronTrigger(hour=4, minute=0),
@@ -355,7 +392,7 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 5. Мониторинг сервера — каждые 30 минут
+    # 6. Мониторинг сервера — каждые 30 минут
     scheduler.add_job(
         monitor_server,
         IntervalTrigger(minutes=30),
