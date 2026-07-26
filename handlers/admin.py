@@ -1,6 +1,5 @@
 import logging
 from datetime import date, timedelta
-from typing import List, Dict, Any
 
 from aiogram import Router, types, F
 from aiogram.filters import Command
@@ -17,7 +16,7 @@ from services.client_service import (
     is_admin, get_free_sub_link
 )
 from services.xray_api import xray
-from services.system_stats import get_system_stats
+from services.cleanup import full_cleanup
 from keyboards.admin_kb import (
     admin_keyboard, user_profile_keyboard,
     subscription_list_keyboard, confirm_keyboard,
@@ -89,6 +88,37 @@ async def cmd_admin(message: types.Message):
         "Выберите действие:",
         reply_markup=admin_keyboard()
     )
+
+
+# ========================
+# КОМАНДА /cleanlogs (РУЧНАЯ ОЧИСТКА)
+# ========================
+
+@router.message(Command("cleanlogs"))
+async def clean_logs_command(message: types.Message):
+    """Ручная очистка логов (для админов)."""
+    if not is_admin(message.from_user.id):
+        return
+
+    await message.answer("🧹 Начинаю очистку системных логов...")
+
+    try:
+        results = await full_cleanup()
+        
+        # Формируем отчёт
+        success_count = sum(1 for _, r in results if r)
+        total_count = len(results)
+        
+        report = f"✅ Очистка завершена!\n\n"
+        for name, result in results:
+            status = "✅" if result else "❌"
+            report += f"{status} {name}\n"
+        report += f"\nВыполнено: {success_count}/{total_count}"
+        
+        await message.answer(report)
+    except Exception as e:
+        logger.error(f"Ошибка при очистке: {e}")
+        await message.answer(f"❌ Ошибка при очистке: {e}")
 
 
 # ========================
@@ -1273,35 +1303,59 @@ async def server_status(callback: types.CallbackQuery):
         return
 
     try:
-        # Проверяем 3x-ui
         is_online = await xray.check_health()
         
-        # Получаем данные из 3x-ui
-        clients_count = 0
+        clients_total = 0
+        clients_online = 0
         traffic_up = 0
         traffic_down = 0
+        up_speed = 0
+        down_speed = 0
         xray_uptime = "неизвестно"
         memory_used = 0
+        cpu_percent = 0
+        ram_percent = 0
+        disk_percent = 0
         
         if is_online:
+            # Получаем список inbound'ов
             data = await xray._api_get("/panel/api/inbounds/list")
             if data and data.get("success"):
                 for inbound in data.get("obj", []):
+                    traffic_up += inbound.get("up", 0)
+                    traffic_down += inbound.get("down", 0)
+                    up_speed += inbound.get("upSpeed", 0)
+                    down_speed += inbound.get("downSpeed", 0)
                     for client in inbound.get("clientStats", []):
-                        clients_count += 1
-                        traffic_up += client.get("up", 0)
-                        traffic_down += client.get("down", 0)
-                
-                # Пытаемся получить uptime Xray из системной информации
-                try:
-                    sys_info = await xray._api_get("/panel/api/status")
-                    if sys_info and sys_info.get("success"):
-                        xray_uptime = sys_info.get("obj", {}).get("uptime", "неизвестно")
-                        memory_used = sys_info.get("obj", {}).get("memory", 0)
-                except:
-                    pass
+                        clients_total += 1
+                        last_online = client.get("lastOnline", 0)
+                        if last_online > 0:
+                            from datetime import datetime, timedelta
+                            last_time = datetime.fromtimestamp(last_online / 1000)
+                            if datetime.now() - last_time < timedelta(minutes=5):
+                                clients_online += 1
+            
+            # Получаем системную статистику с VPS через 3x-ui
+            try:
+                status_data = await xray._api_get("/panel/api/status")
+                if status_data and status_data.get("success"):
+                    obj = status_data.get("obj", {})
+                    xray_uptime = obj.get("uptime", "неизвестно")
+                    memory_used = obj.get("memory", 0)
+                    cpu_percent = obj.get("cpu", 0)
+                    ram_percent = obj.get("ram", 0)
+                    disk_percent = obj.get("disk", 0)
+                else:
+                    # Пробуем альтернативный эндпоинт
+                    sys_status = await xray._api_get("/panel/api/system/status")
+                    if sys_status and sys_status.get("success"):
+                        obj = sys_status.get("obj", {})
+                        cpu_percent = obj.get("cpu", 0)
+                        ram_percent = obj.get("ram", 0)
+                        disk_percent = obj.get("disk", 0)
+            except Exception as e:
+                logger.warning(f"Не удалось получить системную статистику: {e}")
         
-        # Форматируем трафик в человеческий вид
         def format_bytes(bytes_val):
             if bytes_val > 1024**3:
                 return f"{bytes_val / (1024**3):.1f} GB"
@@ -1310,15 +1364,23 @@ async def server_status(callback: types.CallbackQuery):
             else:
                 return f"{bytes_val / 1024:.1f} KB"
         
-        # Получаем системную статистику для справки
-        stats = await get_system_stats()
+        def format_speed(bytes_val):
+            if bytes_val > 1024**2:
+                return f"{bytes_val / (1024**2):.1f} MB/s"
+            elif bytes_val > 1024:
+                return f"{bytes_val / 1024:.1f} KB/s"
+            else:
+                return f"{bytes_val:.0f} B/s"
         
         status_text = (
             f"<b>🖥 Статус сервера</b>\n\n"
             f"📡 3x-ui: <b>{'✅ онлайн' if is_online else '❌ недоступен'}</b>\n"
-            f"📊 Активных клиентов: {clients_count}\n"
-            f"📥 Трафик (всего): {format_bytes(traffic_up)} ↑ / {format_bytes(traffic_down)} ↓\n"
+            f"👥 Клиенты: <b>{clients_online}</b> в сети / {clients_total} всего\n"
+            f"📥 Трафик всего: {format_bytes(traffic_up)} ↑ / {format_bytes(traffic_down)} ↓\n"
         )
+        
+        if up_speed > 0 or down_speed > 0:
+            status_text += f"⚡ Скорость: {format_speed(up_speed)} ↑ / {format_speed(down_speed)} ↓\n"
         
         if xray_uptime != "неизвестно":
             status_text += f"⏱ Xray: {xray_uptime}\n"
@@ -1326,15 +1388,14 @@ async def server_status(callback: types.CallbackQuery):
         if memory_used > 0:
             status_text += f"💾 Память Xray: {memory_used} MB\n"
         
-        status_text += f"\n🌐 Панель: {config.XUI_HOST}"
-        
-        # Добавляем краткую системную информацию (не перегружая)
-        if stats:
+        # Системная статистика с VPS
+        if cpu_percent > 0 or ram_percent > 0 or disk_percent > 0:
             status_text += (
-                f"\n\n<b>💻 Сервер:</b>\n"
-                f"CPU: {stats['cpu']:.0f}% | RAM: {stats['ram']:.0f}% | Диск: {stats['disk']:.0f}%\n"
-                f"Uptime: {stats['uptime']}"
+                f"\n<b>💻 VPS (3x-ui):</b>\n"
+                f"CPU: {cpu_percent:.1f}% | RAM: {ram_percent:.1f}% | Диск: {disk_percent:.1f}%\n"
             )
+        
+        status_text += f"\n🌐 Панель: {config.XUI_HOST}"
         
         await callback.message.answer(status_text)
         

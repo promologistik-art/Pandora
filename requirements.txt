@@ -4,4 +4,3 @@ asyncpg==0.30.0
 httpx==0.28.1
 apscheduler==3.10.4
 python-dotenv==1.0.1
-psutil==5.9.8

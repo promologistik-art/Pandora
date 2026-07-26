@@ -13,7 +13,7 @@ from database.engine import async_session
 from database.models import Client, Subscription, Payment, EventLog, TrafficLog
 from services.xray_api import xray
 from services.client_service import get_active_subscription
-from services.backup import create_backup, cleanup_old_backups
+from services.cleanup import full_cleanup
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
@@ -111,6 +111,7 @@ async def collect_traffic():
 async def check_expiring_subscriptions(bot: Bot):
     today = date.today()
     async with async_session() as session:
+        # Подписки, истекающие через 3 дня
         expires_3d = today + timedelta(days=3)
         result = await session.execute(
             select(Subscription)
@@ -133,6 +134,7 @@ async def check_expiring_subscriptions(bot: Bot):
                 except Exception as e:
                     logger.warning(f"Не удалось отправить напоминание клиенту {client.id}: {e}")
 
+        # Подписки, истекающие сегодня
         result = await session.execute(
             select(Subscription)
             .where(Subscription.status == "active")
@@ -166,6 +168,7 @@ async def check_expiring_subscriptions(bot: Bot):
                 except Exception as e:
                     logger.warning(f"Не удалось уведомить клиента {client.id}: {e}")
 
+        # Триалы, истекающие завтра
         expires_tomorrow = today + timedelta(days=1)
         result = await session.execute(
             select(Subscription)
@@ -317,24 +320,15 @@ async def monitor_server(bot: Bot):
 # ============================================================
 
 async def start_scheduler(bot: Bot):
-    # 1. Бэкап БД — в 2:00 ночи
+    # 1. Очистка системы — 1-го числа каждого месяца в 2:30 ночи
     scheduler.add_job(
-        create_backup,
-        CronTrigger(hour=2, minute=0),
-        id="backup_db",
+        full_cleanup,
+        CronTrigger(day=1, hour=2, minute=30),
+        id="system_cleanup",
         replace_existing=True,
     )
 
-    # 2. Очистка старых бэкапов — в 2:05
-    scheduler.add_job(
-        cleanup_old_backups,
-        CronTrigger(hour=2, minute=5),
-        args=[7],  # Хранить 7 последних
-        id="cleanup_backups",
-        replace_existing=True,
-    )
-
-    # 3. Сбор трафика — в 3:00 (с повторными попытками)
+    # 2. Сбор трафика — в 3:00 (с повторными попытками)
     scheduler.add_job(
         collect_traffic_with_retry,
         CronTrigger(hour=3, minute=0),
@@ -343,7 +337,7 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 4. Напоминания об истечении — в 9:00 МСК
+    # 3. Напоминания об истечении — в 9:00 МСК
     scheduler.add_job(
         check_expiring_subscriptions,
         CronTrigger(hour=5, minute=0),
@@ -352,7 +346,7 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 5. Ежедневная сводка — в 8:00 МСК
+    # 4. Ежедневная сводка — в 8:00 МСК
     scheduler.add_job(
         daily_report,
         CronTrigger(hour=4, minute=0),
@@ -361,7 +355,7 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 6. Мониторинг сервера — каждые 30 минут
+    # 5. Мониторинг сервера — каждые 30 минут
     scheduler.add_job(
         monitor_server,
         IntervalTrigger(minutes=30),
