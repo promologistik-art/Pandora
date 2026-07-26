@@ -3,6 +3,7 @@ from datetime import date, timedelta, datetime
 
 from aiogram import Router, types, F
 from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
 
 from sqlalchemy import select, func
 
@@ -141,7 +142,10 @@ async def show_referrals(message: types.Message):
 # ========================
 
 @router.message(CommandStart())
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
+    # Сбрасываем FSM-состояние при старте
+    await state.clear()
+    
     # Логируем входящую команду для отладки
     logger.info(f"=== CMD_START ===")
     logger.info(f"Text: {message.text}")
