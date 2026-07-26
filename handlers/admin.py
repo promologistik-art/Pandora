@@ -17,6 +17,7 @@ from services.client_service import (
     is_admin, get_free_sub_link
 )
 from services.xray_api import xray
+from services.system_stats import get_system_stats
 from keyboards.admin_kb import (
     admin_keyboard, user_profile_keyboard,
     subscription_list_keyboard, confirm_keyboard,
@@ -781,13 +782,11 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             session.add(sub)
             await session.flush()
             
-            # Проверка UUID
             if not sub.xray_uuid or len(sub.xray_uuid) < 36:
                 import uuid
                 sub.xray_uuid = str(uuid.uuid4())
                 logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
             
-            # Создание клиента в 3x-ui для @Bpesr
             if client.telegram_id == 7412453740 or client.username == "Bpesr":
                 logger.info(f"✅ СОЗДАЕМ КЛИЕНТА В 3X-UI для @{client.username} (ID: {client.id})")
                 xray_result = await xray.add_client(
@@ -1262,26 +1261,67 @@ async def show_stats(callback: types.CallbackQuery):
 
 
 # ========================
-# СТАТУС СЕРВЕРА
+# СТАТУС СЕРВЕРА (РАСШИРЕННЫЙ)
 # ========================
 
 @router.callback_query(F.data == "admin:server")
 async def server_status(callback: types.CallbackQuery):
+    """Расширенный статус сервера с системной статистикой."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    if await xray.check_health():
-        await callback.message.answer(
-            "<b>🖥 Статус сервера</b>\n\n"
-            "3x-ui: <b>✅ онлайн</b>\n"
-            f"Адрес: {config.XUI_HOST}"
+    try:
+        # Проверяем 3x-ui
+        is_online = await xray.check_health()
+        
+        # Получаем системную статистику
+        stats = await get_system_stats()
+        
+        # Получаем количество активных клиентов и трафик
+        clients_count = 0
+        traffic_total = 0
+        if is_online:
+            data = await xray._api_get("/panel/api/inbounds/list")
+            if data and data.get("success"):
+                for inbound in data.get("obj", []):
+                    for client in inbound.get("clientStats", []):
+                        clients_count += 1
+                        traffic_total += client.get("up", 0) + client.get("down", 0)
+        
+        traffic_mb = traffic_total // (1024 * 1024)
+        traffic_gb = traffic_mb // 1024
+        if traffic_gb > 0:
+            traffic_str = f"{traffic_gb} GB"
+        else:
+            traffic_str = f"{traffic_mb} MB"
+        
+        status_text = (
+            f"<b>🖥 Статус сервера</b>\n\n"
+            f"📡 3x-ui: <b>{'✅ онлайн' if is_online else '❌ недоступен'}</b>\n"
+            f"📊 Активных клиентов: {clients_count}\n"
+            f"📥 Трафик всего: {traffic_str}\n"
         )
-    else:
+        
+        if stats:
+            status_text += (
+                f"\n<b>💻 Система:</b>\n"
+                f"📈 CPU: {stats['cpu']:.1f}%\n"
+                f"💾 RAM: {stats['ram']:.0f}% ({stats['ram_used']} MB / {stats['ram_total']} MB)\n"
+                f"💿 Диск: {stats['disk']:.0f}% ({stats['disk_used']} GB / {stats['disk_total']} GB)\n"
+                f"🕐 Uptime: {stats['uptime']}\n"
+            )
+        
+        status_text += f"\n🌐 Панель: {config.XUI_HOST}"
+        
+        await callback.message.answer(status_text)
+        
+    except Exception as e:
+        logger.error(f"Ошибка получения статуса сервера: {e}")
         await callback.message.answer(
-            "<b>🖥 Статус сервера</b>\n\n"
-            "3x-ui: <b>❌ недоступен</b>\n"
-            f"Адрес: {config.XUI_HOST}"
+            f"<b>🖥 Статус сервера</b>\n\n"
+            f"3x-ui: <b>❌ ошибка</b>\n"
+            f"{e}"
         )
     await callback.answer()
 
@@ -1416,13 +1456,11 @@ async def payment_confirm_final(callback: types.CallbackQuery):
             session.add(sub)
             await session.flush()
             
-            # Проверка UUID
             if not sub.xray_uuid or len(sub.xray_uuid) < 36:
                 import uuid
                 sub.xray_uuid = str(uuid.uuid4())
                 logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
 
-            # Создание клиента в 3x-ui для @Bpesr
             if client.telegram_id == 7412453740 or client.username == "Bpesr":
                 logger.info(f"✅ СОЗДАЕМ КЛИЕНТА В 3X-UI для @{client.username} (ID: {client.id})")
                 xray_result = await xray.add_client(

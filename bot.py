@@ -2,12 +2,10 @@ import sys
 import os
 from pathlib import Path
 
-# Жёстко добавляем папку со скриптом в sys.path
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-# Дублируем для верности — добавляем и родительскую
 if str(SCRIPT_DIR.parent) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR.parent))
 
@@ -17,15 +15,29 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 
 from config import config
 from database.engine import init_db
 from handlers.client import router as client_router
 from handlers.admin import router as admin_router
 from services.scheduler import start_scheduler
+from middlewares.rate_limit import RateLimitMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+async def set_default_commands(bot: Bot):
+    commands = [
+        BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="status", description="Статус подписки"),
+        BotCommand(command="help", description="Помощь / FAQ"),
+        BotCommand(command="invite", description="Пригласить друга"),
+        BotCommand(command="admin", description="Админ-панель"),
+    ]
+    await bot.set_my_commands(commands)
+    logger.info("Команды бота установлены")
 
 
 async def main():
@@ -38,9 +50,13 @@ async def main():
     )
     dp = Dispatcher(storage=MemoryStorage())
 
-    # Подключаем оба роутера
-    dp.include_router(admin_router)   # Админские команды
-    dp.include_router(client_router)  # Клиентские команды
+    # Подключаем Rate Limiting (5 запросов за 10 секунд)
+    dp.update.middleware(RateLimitMiddleware(limit=5, period=10))
+
+    await set_default_commands(bot)
+
+    dp.include_router(admin_router)
+    dp.include_router(client_router)
 
     await start_scheduler(bot)
 

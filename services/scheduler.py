@@ -13,13 +13,14 @@ from database.engine import async_session
 from database.models import Client, Subscription, Payment, EventLog, TrafficLog
 from services.xray_api import xray
 from services.client_service import get_active_subscription
+from services.backup import create_backup, cleanup_old_backups
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 
 
 # ============================================================
-# Задача 1: Сбор трафика за вчерашний день (С ПОВТОРНЫМИ ПОПЫТКАМИ)
+# Задача 1: Сбор трафика за вчерашний день
 # ============================================================
 
 async def collect_traffic_with_retry(max_retries: int = 3, delay: int = 10):
@@ -46,7 +47,6 @@ async def collect_traffic():
     yesterday = date.today() - timedelta(days=1)
     
     async with async_session() as session:
-        # Получаем всех клиентов с активной подпиской
         result = await session.execute(
             select(Client)
             .join(Subscription, Client.id == Subscription.client_id)
@@ -62,12 +62,10 @@ async def collect_traffic():
         
         count = 0
         for client in clients:
-            # Получаем активную подписку клиента
             sub = await get_active_subscription(client.id)
             if not sub or not sub.xray_uuid:
                 continue
             
-            # Получаем трафик из 3x-ui
             try:
                 data = await xray._api_get(
                     f"/panel/api/inbounds/getClient/{config.XUI_INBOUND_ID}/{sub.xray_uuid}"
@@ -77,14 +75,12 @@ async def collect_traffic():
                     up = client_data.get("up", 0)
                     down = client_data.get("down", 0)
                     
-                    # Проверяем, есть ли уже запись за этот день
                     existing = await session.execute(
                         select(TrafficLog)
                         .where(TrafficLog.client_id == client.id)
                         .where(TrafficLog.date == yesterday)
                     )
                     if existing.scalar_one_or_none():
-                        # Обновляем существующую запись
                         await session.execute(
                             TrafficLog.__table__.update()
                             .where(TrafficLog.client_id == client.id)
@@ -92,7 +88,6 @@ async def collect_traffic():
                             .values(upload_bytes=up, download_bytes=down)
                         )
                     else:
-                        # Создаём новую запись
                         log = TrafficLog(
                             client_id=client.id,
                             date=yesterday,
@@ -116,7 +111,6 @@ async def collect_traffic():
 async def check_expiring_subscriptions(bot: Bot):
     today = date.today()
     async with async_session() as session:
-        # Подписки, истекающие через 3 дня
         expires_3d = today + timedelta(days=3)
         result = await session.execute(
             select(Subscription)
@@ -139,7 +133,6 @@ async def check_expiring_subscriptions(bot: Bot):
                 except Exception as e:
                     logger.warning(f"Не удалось отправить напоминание клиенту {client.id}: {e}")
 
-        # Подписки, истекающие сегодня
         result = await session.execute(
             select(Subscription)
             .where(Subscription.status == "active")
@@ -173,7 +166,6 @@ async def check_expiring_subscriptions(bot: Bot):
                 except Exception as e:
                     logger.warning(f"Не удалось уведомить клиента {client.id}: {e}")
 
-        # Триалы, истекающие завтра
         expires_tomorrow = today + timedelta(days=1)
         result = await session.execute(
             select(Subscription)
@@ -197,7 +189,7 @@ async def check_expiring_subscriptions(bot: Bot):
 
 
 # ============================================================
-# Задача 3: Ежедневная сводка админу (ЗА ВЧЕРАШНИЙ ДЕНЬ)
+# Задача 3: Ежедневная сводка админу
 # ============================================================
 
 async def daily_report(bot: Bot):
@@ -206,9 +198,6 @@ async def daily_report(bot: Bot):
     tomorrow = today + timedelta(days=1)
 
     async with async_session() as session:
-        # ========================================
-        # 1. Общие показатели (ЗА ВЧЕРА)
-        # ========================================
         new_clients = await session.scalar(
             select(func.count(Client.id))
             .where(func.date(Client.created_at) == yesterday)
@@ -228,16 +217,12 @@ async def daily_report(bot: Bot):
             .where(Subscription.expires_at == yesterday)
         )
 
-        # ========================================
-        # 2. Финансы
-        # ========================================
         payments_yesterday = await session.scalar(
             select(func.sum(Payment.amount))
             .where(Payment.status == "confirmed")
             .where(func.date(Payment.confirmed_at) == yesterday)
         )
 
-        # Выручка за месяц
         month_start = today.replace(day=1)
         payments_month = await session.scalar(
             select(func.sum(Payment.amount))
@@ -245,9 +230,6 @@ async def daily_report(bot: Bot):
             .where(Payment.confirmed_at >= month_start)
         )
 
-        # ========================================
-        # 3. Трафик за вчера (из TrafficLog)
-        # ========================================
         traffic = await session.execute(
             select(
                 func.sum(TrafficLog.upload_bytes).label("upload"),
@@ -259,9 +241,6 @@ async def daily_report(bot: Bot):
         upload_mb = traffic_data.upload // (1024 * 1024) if traffic_data.upload else 0
         download_mb = traffic_data.download // (1024 * 1024) if traffic_data.download else 0
 
-        # ========================================
-        # 4. Истекает завтра
-        # ========================================
         expiring_tomorrow = await session.execute(
             select(Subscription, Client.username, Client.first_name)
             .join(Client, Subscription.client_id == Client.id)
@@ -270,9 +249,6 @@ async def daily_report(bot: Bot):
         )
         expiring_list = expiring_tomorrow.all()
 
-    # ========================================
-    # 5. Собираем отчёт
-    # ========================================
     report = (
         f"<b>📊 Ежедневная сводка</b>\n"
         f"Дата отчёта: {today.strftime('%d.%m.%Y')}\n"
@@ -290,7 +266,6 @@ async def daily_report(bot: Bot):
         f"Download: {download_mb} MB\n\n"
     )
 
-    # Истекает завтра
     if expiring_list:
         report += "<b>⚠️ Истекает завтра:</b>\n"
         for sub, username, first_name in expiring_list:
@@ -300,7 +275,6 @@ async def daily_report(bot: Bot):
     else:
         report += "<b>✅ Никто не истекает завтра</b>"
 
-    # Отправляем админам
     for admin_id in config.ADMIN_IDS:
         try:
             await bot.send_message(admin_id, report)
@@ -313,7 +287,6 @@ async def daily_report(bot: Bot):
 # ============================================================
 
 async def monitor_server(bot: Bot):
-    """Проверяет доступность 3x-ui и алертит админов при падении."""
     try:
         if await xray.check_health():
             logger.info("Мониторинг сервера: 3x-ui онлайн")
@@ -344,34 +317,51 @@ async def monitor_server(bot: Bot):
 # ============================================================
 
 async def start_scheduler(bot: Bot):
-    # 1. Сбор трафика — в 3:00 ночи (с повторными попытками)
+    # 1. Бэкап БД — в 2:00 ночи
+    scheduler.add_job(
+        create_backup,
+        CronTrigger(hour=2, minute=0),
+        id="backup_db",
+        replace_existing=True,
+    )
+
+    # 2. Очистка старых бэкапов — в 2:05
+    scheduler.add_job(
+        cleanup_old_backups,
+        CronTrigger(hour=2, minute=5),
+        args=[7],  # Хранить 7 последних
+        id="cleanup_backups",
+        replace_existing=True,
+    )
+
+    # 3. Сбор трафика — в 3:00 (с повторными попытками)
     scheduler.add_job(
         collect_traffic_with_retry,
-        CronTrigger(hour=3, minute=0),  # 3:00 UTC = 7:00 МСК
-        args=[3, 10],  # 3 попытки, интервал 10 секунд
+        CronTrigger(hour=3, minute=0),
+        args=[3, 10],
         id="collect_traffic",
         replace_existing=True,
     )
 
-    # 2. Напоминания об истечении — в 9:00 МСК
+    # 4. Напоминания об истечении — в 9:00 МСК
     scheduler.add_job(
         check_expiring_subscriptions,
-        CronTrigger(hour=5, minute=0),  # 5:00 UTC = 9:00 МСК
+        CronTrigger(hour=5, minute=0),
         args=[bot],
         id="check_expiring",
         replace_existing=True,
     )
 
-    # 3. Ежедневная сводка — в 8:00 МСК
+    # 5. Ежедневная сводка — в 8:00 МСК
     scheduler.add_job(
         daily_report,
-        CronTrigger(hour=4, minute=0),  # 4:00 UTC = 8:00 МСК
+        CronTrigger(hour=4, minute=0),
         args=[bot],
         id="daily_report",
         replace_existing=True,
     )
 
-    # 4. Мониторинг сервера — каждые 30 минут
+    # 6. Мониторинг сервера — каждые 30 минут
     scheduler.add_job(
         monitor_server,
         IntervalTrigger(minutes=30),
@@ -385,5 +375,5 @@ async def start_scheduler(bot: Bot):
 
 
 async def stop_scheduler():
-    logger.info("Планировщик остановлен")
     scheduler.shutdown()
+    logger.info("Планировщик остановлен")
