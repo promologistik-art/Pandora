@@ -11,7 +11,7 @@ from sqlalchemy import select, func, text
 
 from config import config
 from database.engine import async_session
-from database.models import Client, Subscription, Payment, EventLog, Referral
+from database.models import Client, Subscription, Payment, EventLog, Referral, TrafficLog
 from services.client_service import (
     get_or_create_client, get_active_subscription,
     is_admin, get_free_sub_link
@@ -1297,7 +1297,7 @@ async def show_stats(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "admin:server")
 async def server_status(callback: types.CallbackQuery):
-    """Расширенный статус сервера с данными из 3x-ui."""
+    """Расширенный статус сервера с данными из 3x-ui и трафиком за сегодня."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
@@ -1344,7 +1344,7 @@ async def server_status(callback: types.CallbackQuery):
                     
                     # Память Xray (appStats)
                     app_stats = obj.get("appStats", {})
-                    memory_used = app_stats.get("mem", 0) // (1024 * 1024)  # Переводим в MB
+                    memory_used = app_stats.get("mem", 0) // (1024 * 1024)
                     
                     # CPU
                     cpu_percent = obj.get("cpu", 0)
@@ -1363,10 +1363,27 @@ async def server_status(callback: types.CallbackQuery):
                     xray_state = obj.get("xray", {}).get("state", "unknown")
                     if xray_state != "running":
                         logger.warning(f"Xray state: {xray_state}")
-                else:
-                    logger.warning("Не удалось получить системную статистику: status_data is None or not success")
             except Exception as e:
                 logger.warning(f"Не удалось получить системную статистику: {e}")
+        
+        # ========================================
+        # ТРАФИК ЗА СЕГОДНЯ ИЗ TrafficLog
+        # ========================================
+        today = date.today()
+        upload_today = 0
+        download_today = 0
+        
+        async with async_session() as session:
+            today_traffic = await session.execute(
+                select(
+                    func.sum(TrafficLog.upload_bytes).label("upload"),
+                    func.sum(TrafficLog.download_bytes).label("download")
+                )
+                .where(TrafficLog.date == today)
+            )
+            traffic_data = today_traffic.one()
+            upload_today = traffic_data.upload // (1024 * 1024) if traffic_data.upload else 0
+            download_today = traffic_data.download // (1024 * 1024) if traffic_data.download else 0
         
         def format_bytes(bytes_val):
             if bytes_val > 1024**3:
@@ -1391,11 +1408,15 @@ async def server_status(callback: types.CallbackQuery):
             f"📥 Трафик всего: {format_bytes(traffic_up)} ↑ / {format_bytes(traffic_down)} ↓\n"
         )
         
+        # Трафик за сегодня
+        if upload_today > 0 or download_today > 0:
+            status_text += f"📊 Трафик за сегодня: {upload_today} MB ↑ / {download_today} MB ↓\n"
+        
+        # Текущая скорость
         if up_speed > 0 or down_speed > 0:
-            status_text += f"⚡ Скорость: {format_speed(up_speed)} ↑ / {format_speed(down_speed)} ↓\n"
+            status_text += f"⚡ Текущая скорость: {format_speed(up_speed)} ↑ / {format_speed(down_speed)} ↓\n"
         
         if xray_uptime != "неизвестно":
-            # Конвертируем секунды в дни/часы/минуты
             uptime_seconds = xray_uptime
             days = uptime_seconds // 86400
             hours = (uptime_seconds % 86400) // 3600
