@@ -519,7 +519,6 @@ async def show_user_profile(message: types.Message, user_id: int):
             await message.answer("❌ Клиент не найден.")
             return
 
-        # Обновляем объект клиента из БД
         await session.refresh(client)
 
         if client.status == "banned":
@@ -783,10 +782,7 @@ async def extend_subscription_days(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-# ========================
-# ИЗМЕНЕНИЕ: ФУНКЦИЯ ПРОДЛЕНИЯ ПОДПИСКИ
-# ========================
-
+# ✅ ИСПРАВЛЕНО: Убран refresh(), логирование ПОСЛЕ commit()
 @router.callback_query(F.data.startswith("admin:confirm_extend:"))
 async def extend_subscription_confirm(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -808,23 +804,17 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             await callback.answer()
             return
 
-        # ✅ ИЗМЕНЕНИЕ: передаём сессию в функцию
         existing_sub = await get_active_subscription(client.id, session)
         
         if existing_sub:
-            # ПРОДЛЕВАЕМ существующую
             existing_sub.expires_at = existing_sub.expires_at + timedelta(days=days)
             existing_sub.plan = "1month"
             sub = existing_sub
             
-            # ✅ ИЗМЕНЕНИЕ: убран flush(), порядок операций исправлен
             await session.commit()
-            await session.refresh(sub)
-            
-            # ✅ ИЗМЕНЕНИЕ: логирование ПОСЛЕ refresh()
+            # ✅ refresh() УБРАН
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id}")
         else:
-            # НЕТ активной подписки — деактивируем старые и создаём новую
             await session.execute(
                 text("UPDATE subscriptions SET status = 'expired' WHERE client_id = :uid AND status = 'active'"),
                 {"uid": client.id}
@@ -838,20 +828,16 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             )
             session.add(sub)
             
-            # ✅ ИЗМЕНЕНИЕ: убран flush(), порядок операций исправлен
             await session.commit()
-            await session.refresh(sub)
-            
+            # ✅ refresh() УБРАН
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id}")
         
-        # Проверка UUID
         if not sub.xray_uuid or len(sub.xray_uuid) < 36:
             import uuid
             sub.xray_uuid = str(uuid.uuid4())
             logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
             await session.commit()
         
-        # Создание клиента в 3x-ui для @Bpesr
         if client.telegram_id == 7412453740 or client.username == "Bpesr":
             logger.info(f"✅ СОЗДАЕМ КЛИЕНТА В 3X-UI для @{client.username} (ID: {client.id})")
             xray_result = await xray.add_client(
@@ -1346,7 +1332,6 @@ async def server_status(callback: types.CallbackQuery):
         disk_percent = 0
         
         if is_online:
-            # Получаем список inbound'ов
             data = await xray._api_get("/panel/api/inbounds/list")
             if data and data.get("success"):
                 for inbound in data.get("obj", []):
@@ -1359,26 +1344,21 @@ async def server_status(callback: types.CallbackQuery):
                             if datetime.now() - last_time < timedelta(minutes=5):
                                 clients_online += 1
             
-            # Получаем системную статистику с VPS
             try:
                 status_data = await xray._api_get("/panel/api/server/status")
                 if status_data and status_data.get("success"):
                     obj = status_data.get("obj", {})
                     
-                    # CPU
                     cpu_percent = obj.get("cpu", 0)
                     
-                    # RAM
                     mem = obj.get("mem", {})
                     if mem.get("total", 0) > 0:
                         ram_percent = (mem.get("current", 0) / mem.get("total", 1)) * 100
                     
-                    # Диск
                     disk = obj.get("disk", {})
                     if disk.get("total", 0) > 0:
                         disk_percent = (disk.get("current", 0) / disk.get("total", 1)) * 100
                     
-                    # Xray state (логируем, если не running)
                     xray_state = obj.get("xray", {}).get("state", "unknown")
                     if xray_state != "running":
                         logger.warning(f"Xray state: {xray_state}")
@@ -1391,7 +1371,6 @@ async def server_status(callback: types.CallbackQuery):
             f"Клиенты: <b>{clients_online}</b> в сети / {clients_total} всего\n"
         )
         
-        # Системная статистика с VPS
         if cpu_percent > 0 or ram_percent > 0 or disk_percent > 0:
             status_text += (
                 f"\n<b>💻 VPS (3x-ui):</b>\n"
@@ -1482,14 +1461,7 @@ async def cleanup_subscriptions(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# ========================
-# ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА (С ПРОДЛЕНИЕМ И РЕФЕРАЛКОЙ)
-# ========================
-
-# ========================
-# ИЗМЕНЕНИЕ: ФУНКЦИЯ ПОДТВЕРЖДЕНИЯ ПЛАТЕЖА
-# ========================
-
+# ✅ ИСПРАВЛЕНО: Убраны refresh(), логирование ПОСЛЕ commit()
 @router.callback_query(F.data.startswith("admin:payment_confirm_final:"))
 async def payment_confirm_final(callback: types.CallbackQuery):
     """Подтверждение платежа с выбором суммы."""
@@ -1530,35 +1502,23 @@ async def payment_confirm_final(callback: types.CallbackQuery):
 
         tariff = config.TARIFFS.get(tariff_key, config.TARIFFS["1month"])
 
-        # ========================================
-        # 1. ПРОВЕРЯЕМ, ЕСТЬ ЛИ АКТИВНАЯ ПОДПИСКА
-        # ========================================
-        # ✅ ИЗМЕНЕНИЕ: передаём сессию в функцию
         existing_sub = await get_active_subscription(client.id, session)
 
         if existing_sub:
-            # ========================================
-            # 2. ЕСТЬ → ПРОДЛЕВАЕМ
-            # ========================================
             existing_sub.expires_at = existing_sub.expires_at + timedelta(days=tariff["days"])
             existing_sub.plan = tariff_key
             sub = existing_sub
             
-            # ✅ ИЗМЕНЕНИЕ: убран flush(), порядок операций исправлен
             await session.commit()
-            await session.refresh(sub)
-            
-            # ✅ ИЗМЕНЕНИЕ: логирование ПОСЛЕ refresh()
+            # ✅ refresh() УБРАН
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id} (продление)")
             
-            # Проверяем UUID
             if not sub.xray_uuid or len(sub.xray_uuid) < 36:
                 import uuid
                 sub.xray_uuid = str(uuid.uuid4())
                 logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
                 await session.commit()
             
-            # Обновляем клиента в 3x-ui (продлеваем срок)
             if client.telegram_id == 7412453740 or client.username == "Bpesr":
                 await xray.add_client(
                     email=f"client_{client.id}",
@@ -1566,9 +1526,6 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                     expiry_days=(sub.expires_at - date.today()).days
                 )
         else:
-            # ========================================
-            # 3. НЕТ → ДЕАКТИВИРУЕМ СТАРЫЕ И СОЗДАЁМ НОВУЮ
-            # ========================================
             await session.execute(
                 text("UPDATE subscriptions SET status = 'expired' WHERE client_id = :uid AND status = 'active'"),
                 {"uid": client.id}
@@ -1582,20 +1539,16 @@ async def payment_confirm_final(callback: types.CallbackQuery):
             )
             session.add(sub)
             
-            # ✅ ИЗМЕНЕНИЕ: убран flush(), порядок операций исправлен
             await session.commit()
-            await session.refresh(sub)
-            
+            # ✅ refresh() УБРАН
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id} (первая оплата)")
             
-            # Проверяем UUID
             if not sub.xray_uuid or len(sub.xray_uuid) < 36:
                 import uuid
                 sub.xray_uuid = str(uuid.uuid4())
                 logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
                 await session.commit()
             
-            # Создаём клиента в 3x-ui для @Bpesr
             if client.telegram_id == 7412453740 or client.username == "Bpesr":
                 xray_result = await xray.add_client(
                     email=f"client_{client.id}",
@@ -1620,9 +1573,6 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                 sub.sub_link = sub_link
                 logger.info(f"❌ Старая схема для клиента {client.id}")
 
-        # ========================================
-        # 4. РЕФЕРАЛЬНАЯ ПРОГРАММА (ТОЛЬКО ПРИ ПЕРВОЙ ОПЛАТЕ)
-        # ========================================
         if client.referrer_id:
             existing_referral = await session.execute(
                 select(Referral).where(Referral.referred_id == client.id)
@@ -1638,8 +1588,6 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                 session.add(referral)
                 await session.commit()
                 
-                # Начисляем бонус рефереру на ЕГО АКТИВНУЮ ПОДПИСКУ
-                # ✅ ИЗМЕНЕНИЕ: передаём сессию в функцию
                 referrer_sub = await get_active_subscription(client.referrer_id, session)
                 if referrer_sub:
                     referrer_sub.expires_at = referrer_sub.expires_at + timedelta(days=config.REFERRAL_BONUS_DAYS)
