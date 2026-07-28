@@ -25,6 +25,9 @@ class XRayAPI:
             logger.error("3x-ui: API-токен не настроен! Добавьте XUI_API_TOKEN в .env")
             return None
 
+        # ✅ ОТЛАДКА: показываем первые 10 символов токена
+        logger.info(f"3x-ui: токен (первые 10 символов): {self.api_token[:10]}...")
+
         session = await self._get_session()
         headers = {
             "Authorization": f"Bearer {self.api_token}",
@@ -41,6 +44,9 @@ class XRayAPI:
                 return None
             if resp.status_code == 401:
                 logger.error("3x-ui: 401 Unauthorized — токен недействителен")
+                return None
+            if resp.status_code == 404:
+                logger.error("3x-ui: 404 Not Found — проверьте путь или порт")
                 return None
 
             resp.raise_for_status()
@@ -77,6 +83,9 @@ class XRayAPI:
             if resp.status_code == 401:
                 logger.error("3x-ui: 401 Unauthorized — токен недействителен")
                 return None
+            if resp.status_code == 404:
+                logger.error("3x-ui: 404 Not Found — проверьте путь или порт")
+                return None
 
             resp.raise_for_status()
             return resp.json()
@@ -91,8 +100,7 @@ class XRayAPI:
     async def check_health(self) -> bool:
         """Проверка доступности 3x-ui."""
         try:
-            # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
-            data = await self._api_get("/api/inbounds/list")
+            data = await self._api_get("/panel/api/inbounds/list")
             if data and data.get("success"):
                 logger.info("3x-ui health check: OK")
                 return True
@@ -105,8 +113,7 @@ class XRayAPI:
 
     async def _get_inbound(self) -> dict | None:
         """Получить информацию о inbound."""
-        # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
-        data = await self._api_get("/api/inbounds/list")
+        data = await self._api_get("/panel/api/inbounds/list")
         if not data or not data.get("success"):
             logger.error("3x-ui: не удалось получить список inbound")
             return None
@@ -121,8 +128,7 @@ class XRayAPI:
 
     async def _get_client_uuid_by_email(self, email: str) -> str | None:
         """Получить реальный UUID клиента по email из 3x-ui."""
-        # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
-        data = await self._api_get("/api/inbounds/list")
+        data = await self._api_get("/panel/api/inbounds/list")
         if not data or not data.get("success"):
             logger.error("3x-ui: не удалось получить список inbound")
             return None
@@ -204,9 +210,8 @@ class XRayAPI:
             "subSortIndex": inbound.get("subSortIndex", 1),
         }
 
-        # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
         result = await self._api_post(
-            f"/api/inbounds/update/{config.XUI_INBOUND_ID}",
+            f"/panel/api/inbounds/update/{config.XUI_INBOUND_ID}",
             update_data
         )
 
@@ -234,8 +239,7 @@ class XRayAPI:
         """
         logger.info(f"3x-ui: обновление срока для {email} до {expiry_days} дней")
         
-        # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
-        data = await self._api_get("/api/inbounds/list")
+        data = await self._api_get("/panel/api/inbounds/list")
         if not data or not data.get("success"):
             logger.error("3x-ui: не удалось получить список inbound")
             return False
@@ -264,9 +268,8 @@ class XRayAPI:
                         "flow": client.get("flow", "xtls-rprx-vision"),
                     }
                     
-                    # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
                     result = await self._api_post(
-                        f"/api/inbounds/updateClient/{inbound_id}/{client_id}",
+                        f"/panel/api/inbounds/updateClient/{inbound_id}/{client_id}",
                         update_data
                     )
                     
@@ -333,9 +336,8 @@ class XRayAPI:
             "subSortIndex": inbound.get("subSortIndex", 1),
         }
 
-        # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
         result = await self._api_post(
-            f"/api/inbounds/update/{config.XUI_INBOUND_ID}",
+            f"/panel/api/inbounds/update/{config.XUI_INBOUND_ID}",
             update_data
         )
         return result and result.get("success", False)
