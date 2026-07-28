@@ -174,6 +174,9 @@ async def cmd_start(message: types.Message, state: FSMContext):
     # ========================================
     # 2. ОДНА СЕССИЯ ДЛЯ ВСЕГО
     # ========================================
+    client_data = None
+    is_new_client = False
+    
     async with async_session() as session:
         # Проверка на бан
         result = await session.execute(
@@ -201,18 +204,14 @@ async def cmd_start(message: types.Message, state: FSMContext):
             
             logger.info(f"Новый клиент: {client.id} (@{client.username})")
             
-            # Уведомление админов о новом пользователе
-            for admin_id in config.ADMIN_IDS:
-                try:
-                    await message.bot.send_message(
-                        admin_id,
-                        f"🆕 <b>Новый пользователь!</b>\n"
-                        f"ID: {client.id}\n"
-                        f"Имя: {client.first_name}\n"
-                        f"Username: @{client.username or 'нет'}"
-                    )
-                except Exception as e:
-                    logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
+            # ✅ ИЗМЕНЕНИЕ: сохраняем данные для уведомления ПОСЛЕ сессии
+            client_data = {
+                "id": client.id,
+                "first_name": client.first_name,
+                "username": client.username,
+                "telegram_id": client.telegram_id
+            }
+            is_new_client = True
         else:
             # Если клиент уже существует, обновляем его данные
             client.username = message.from_user.username
@@ -263,7 +262,23 @@ async def cmd_start(message: types.Message, state: FSMContext):
                 logger.warning(f"Реферер с ID {ref_arg} не найден")
 
     # ========================================
-    # 4. ПРИВЕТСТВИЕ (вне сессии)
+    # 4. ✅ ИЗМЕНЕНИЕ: УВЕДОМЛЕНИЕ АДМИНОВ (ВНЕ СЕССИИ)
+    # ========================================
+    if is_new_client and client_data:
+        for admin_id in config.ADMIN_IDS:
+            try:
+                await message.bot.send_message(
+                    admin_id,
+                    f"🆕 <b>Новый пользователь!</b>\n"
+                    f"ID: {client_data['id']}\n"
+                    f"Имя: {client_data['first_name']}\n"
+                    f"Username: @{client_data['username'] or 'нет'}"
+                )
+            except Exception as e:
+                logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
+
+    # ========================================
+    # 5. ПРИВЕТСТВИЕ
     # ========================================
     welcome = (
         "<b>📦 Ящик Пандоры</b> — стабильный VPN с умной маршрутизацией.\n"
@@ -579,7 +594,6 @@ async def send_instructions(callback: types.CallbackQuery):
         "   • URL: вставьте ссылку\n"
         "4. Подключитесь"
     )
-    await callback.message.edit_text(text, reply_markup=back_keyboard())
     await callback.answer()
 
 
@@ -601,7 +615,7 @@ async def show_faq(callback: types.CallbackQuery):
         "В @PyxisPandorae_bot нажмите «📊 Статус» → «💳 Продлить подписку».\n\n"
         "💬 Не нашли ответ? Свяжитесь с поддержкой."
     )
-    await callback.message.edit_text(text, reply_markup=back_keyboard())
+    await callback.message.edit_text(text, reply_markup=help_keyboard())
     await callback.answer()
 
 
@@ -714,6 +728,10 @@ async def payment_confirm(callback: types.CallbackQuery):
     await callback.answer()
 
 
+# ========================================
+# ✅ ИЗМЕНЕНИЕ: ОПЛАТА ПО 4 ЦИФРАМ
+# ========================================
+
 @router.message(F.text, F.text.regexp(r"^\d{4}$"))
 async def payment_phone_digits(message: types.Message):
     client = await get_or_create_client(
@@ -729,6 +747,11 @@ async def payment_phone_digits(message: types.Message):
         )
         return
 
+    # ✅ ИЗМЕНЕНИЕ: сохраняем данные для уведомления ПОСЛЕ сессии
+    payment_id = None
+    client_username = client.username
+    client_id = client.id
+
     async with async_session() as session:
         payment = Payment(
             client_id=client.id,
@@ -738,24 +761,30 @@ async def payment_phone_digits(message: types.Message):
         )
         session.add(payment)
         await session.commit()
+        payment_id = payment.id
 
-        for admin_id in config.ADMIN_IDS:
-            try:
-                await message.bot.send_message(
-                    admin_id,
-                    f"🔔 <b>Новый платёж</b>\n"
-                    f"Клиент: @{client.username} (ID: {client.id})\n"
-                    f"Последние 4 цифры: <code>{message.text}</code>",
-                    reply_markup=payment_confirm_keyboard(payment.id)
-                )
-            except Exception as e:
-                logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
+    # ✅ ИЗМЕНЕНИЕ: УВЕДОМЛЕНИЕ АДМИНОВ (ВНЕ СЕССИИ)
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await message.bot.send_message(
+                admin_id,
+                f"🔔 <b>Новый платёж</b>\n"
+                f"Клиент: @{client_username} (ID: {client_id})\n"
+                f"Последние 4 цифры: <code>{message.text}</code>",
+                reply_markup=payment_confirm_keyboard(payment_id)
+            )
+        except Exception as e:
+            logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
 
     await message.answer(
         "✅ Платёж зарегистрирован. Ожидайте подтверждения.\n"
         f"По вопросам: @{config.SUPPORT_BOT_USERNAME}"
     )
 
+
+# ========================================
+# ✅ ИЗМЕНЕНИЕ: ОПЛАТА ПО СКРИНШОТУ
+# ========================================
 
 @router.message(F.photo)
 async def payment_screenshot(message: types.Message):
@@ -772,6 +801,12 @@ async def payment_screenshot(message: types.Message):
         )
         return
 
+    # ✅ ИЗМЕНЕНИЕ: сохраняем данные для уведомления ПОСЛЕ сессии
+    payment_id = None
+    client_username = client.username
+    client_id = client.id
+    photo_file_id = message.photo[-1].file_id
+
     async with async_session() as session:
         payment = Payment(
             client_id=client.id,
@@ -780,20 +815,22 @@ async def payment_screenshot(message: types.Message):
         )
         session.add(payment)
         await session.commit()
+        payment_id = payment.id
 
-        for admin_id in config.ADMIN_IDS:
-            try:
-                await message.bot.send_photo(
-                    admin_id,
-                    message.photo[-1].file_id,
-                    caption=(
-                        f"🔔 <b>Новый платёж (скриншот)</b>\n"
-                        f"Клиент: @{client.username} (ID: {client.id})"
-                    ),
-                    reply_markup=payment_confirm_keyboard(payment.id)
-                )
-            except Exception as e:
-                logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
+    # ✅ ИЗМЕНЕНИЕ: УВЕДОМЛЕНИЕ АДМИНОВ (ВНЕ СЕССИИ)
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await message.bot.send_photo(
+                admin_id,
+                photo_file_id,
+                caption=(
+                    f"🔔 <b>Новый платёж (скриншот)</b>\n"
+                    f"Клиент: @{client_username} (ID: {client_id})"
+                ),
+                reply_markup=payment_confirm_keyboard(payment_id)
+            )
+        except Exception as e:
+            logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
 
     await message.answer(
         "✅ Скриншот получен. Ожидайте подтверждения.\n"
