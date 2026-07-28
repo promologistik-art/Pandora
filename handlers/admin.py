@@ -519,6 +519,9 @@ async def show_user_profile(message: types.Message, user_id: int):
             await message.answer("❌ Клиент не найден.")
             return
 
+        # Обновляем объект клиента из БД
+        await session.refresh(client)
+
         if client.status == "banned":
             await message.answer(f"🚫 Клиент #{user_id} заблокирован.")
             return
@@ -573,6 +576,8 @@ async def show_user_profile_callback(callback: types.CallbackQuery):
             await callback.message.answer("❌ Клиент не найден.")
             await callback.answer()
             return
+        
+        await session.refresh(client)
         
         subscriptions = await get_client_active_subscriptions(client_id)
         has_subscription = len(subscriptions) > 0
