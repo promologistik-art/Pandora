@@ -28,6 +28,15 @@ class Migration:
                 )
             """
         },
+        # ✅ НОВАЯ МИГРАЦИЯ: изменение колонки xray_uuid
+        {
+            "name": "update_xray_uuid_nullable",
+            "description": "Изменение колонки xray_uuid в таблице subscriptions (nullable, без default)",
+            "sql": """
+                ALTER TABLE subscriptions ALTER COLUMN xray_uuid DROP DEFAULT;
+                ALTER TABLE subscriptions ALTER COLUMN xray_uuid DROP NOT NULL;
+            """
+        },
     ]
     
     @classmethod

@@ -45,7 +45,8 @@ class Subscription(Base):
     status = Column(String(20), default="active")  # active, expired, cancelled, banned, cleaned
     plan = Column(String(20), default="1month")
     is_trial = Column(Boolean, default=False)
-    xray_uuid = Column(String(64), default=generate_uuid)
+    # ✅ ИЗМЕНЕНИЕ: убран default=generate_uuid, добавлен nullable=True
+    xray_uuid = Column(String(64), nullable=True)
     sub_link = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

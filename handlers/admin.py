@@ -832,17 +832,11 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
                 expires_at=date.today() + timedelta(days=days),
                 plan="1month",
                 is_trial=False,
+                xray_uuid=None,  # ✅ Явно указываем None
             )
             session.add(sub)
             await session.commit()
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id}")
-            
-            # ✅ Проверяем UUID
-            if not sub.xray_uuid or len(sub.xray_uuid) < 36:
-                import uuid
-                sub.xray_uuid = str(uuid.uuid4())
-                logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
-                await session.commit()
             
             # ✅ Обновляем клиента в 3x-ui (уже существует от триала)
             if client.telegram_id == 7412453740 or client.username == "Bpesr":
@@ -1511,6 +1505,7 @@ async def payment_confirm_final(callback: types.CallbackQuery):
             await session.commit()
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id} (продление)")
             
+            # ✅ Если UUID нет — создаём (но такого быть не должно, если клиент уже есть)
             if not sub.xray_uuid or len(sub.xray_uuid) < 36:
                 import uuid
                 sub.xray_uuid = str(uuid.uuid4())
@@ -1537,16 +1532,11 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                 expires_at=date.today() + timedelta(days=tariff["days"]),
                 plan=tariff_key,
                 is_trial=False,
+                xray_uuid=None,  # ✅ Явно указываем None
             )
             session.add(sub)
             await session.commit()
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id} (первая оплата)")
-            
-            if not sub.xray_uuid or len(sub.xray_uuid) < 36:
-                import uuid
-                sub.xray_uuid = str(uuid.uuid4())
-                logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
-                await session.commit()
             
             # ✅ Обновляем клиента в 3x-ui (уже существует от триала)
             if client.telegram_id == 7412453740 or client.username == "Bpesr":

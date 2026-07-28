@@ -117,7 +117,28 @@ class XRayAPI:
         logger.error(f"3x-ui: inbound с ID {config.XUI_INBOUND_ID} не найден")
         return None
 
-    async def add_client(self, email: str, uuid: str, expiry_days: int = 30) -> dict | None:
+    async def _get_client_uuid_by_email(self, email: str) -> str | None:
+        """Получить реальный UUID клиента по email из 3x-ui."""
+        data = await self._api_get("/panel/api/inbounds/list")
+        if not data or not data.get("success"):
+            logger.error("3x-ui: не удалось получить список inbound")
+            return None
+        
+        inbounds = data.get("obj", [])
+        for inbound in inbounds:
+            settings = inbound.get("settings", {})
+            if isinstance(settings, str):
+                settings = json.loads(settings)
+            
+            clients = settings.get("clients", [])
+            for client in clients:
+                if client.get("email") == email:
+                    return client.get("id")
+        
+        return None
+
+    # ✅ ИЗМЕНЕНИЕ: uuid теперь опциональный (None — 3x-ui создаст сам)
+    async def add_client(self, email: str, uuid: str = None, expiry_days: int = 30) -> dict | None:
         """Добавить клиента в 3x-ui с указанием срока действия."""
         logger.info(f"3x-ui: НАЧАЛО создания клиента {email}, срок {expiry_days} дней")
         inbound = await self._get_inbound()
@@ -138,9 +159,10 @@ class XRayAPI:
             expiry_time = 0
 
         clients = settings.get("clients", [])
-        clients.append({
+        
+        # ✅ Формируем данные клиента
+        client_data = {
             "email": email,
-            "id": uuid,
             "enable": True,
             "flow": "xtls-rprx-vision",
             "auth": auth,
@@ -152,7 +174,16 @@ class XRayAPI:
             "tgId": 0,
             "security": "auto",
             "reset": 0,
-        })
+        }
+        
+        # ✅ Если UUID передан — используем, если нет — 3x-ui создаст сам
+        if uuid:
+            client_data["id"] = uuid
+            logger.info(f"3x-ui: передан UUID {uuid}")
+        else:
+            logger.info("3x-ui: UUID не передан, будет создан автоматически")
+        
+        clients.append(client_data)
         settings["clients"] = clients
 
         update_data = {
@@ -181,11 +212,20 @@ class XRayAPI:
 
         if result and result.get("success"):
             logger.info(f"3x-ui: клиент {email} добавлен, действует до {expiry_days} дней")
-            return {
-                "uuid": uuid,
-                "email": email,
-                "auth": auth,
-            }
+            
+            # ✅ ЗАБИРАЕМ РЕАЛЬНЫЙ UUID ИЗ 3X-UI
+            real_uuid = await self._get_client_uuid_by_email(email)
+            if real_uuid:
+                logger.info(f"3x-ui: реальный UUID для {email}: {real_uuid}")
+                return {
+                    "uuid": real_uuid,
+                    "email": email,
+                    "auth": auth,
+                }
+            else:
+                logger.warning(f"3x-ui: не удалось получить реальный UUID для {email}")
+                return None
+        
         logger.error(f"3x-ui: ошибка добавления клиента - {result}")
         return None
 

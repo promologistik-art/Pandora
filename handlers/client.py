@@ -371,31 +371,30 @@ async def trial_start(callback: types.CallbackQuery):
             expires_at=date.today() + timedelta(days=config.TRIAL_DAYS),
             plan="trial",
             is_trial=True,
+            xray_uuid=None,  # ✅ Явно указываем None
         )
         session.add(sub)
         await session.flush()
 
         # ========================================
-        # ПРОВЕРКА UUID — ЕСЛИ ПУСТОЙ, ГЕНЕРИРУЕМ
-        # ========================================
-        if not sub.xray_uuid or len(sub.xray_uuid) < 36:
-            import uuid
-            sub.xray_uuid = str(uuid.uuid4())
-            logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
-            await session.commit()
-
-        # ========================================
-        # СОЗДАНИЕ КЛИЕНТА В 3X-UI ДЛЯ ТРИАЛА (ТОЛЬКО ДЛЯ @Bpesr)
+        # ✅ ИЗМЕНЕНИЕ: НЕ ПЕРЕДАЁМ UUID — 3x-ui создаст сам
         # ========================================
         if client.telegram_id == 7412453740 or client.username == "Bpesr":
             logger.info(f"✅ СОЗДАЕМ ТРИАЛЬНОГО КЛИЕНТА В 3X-UI для @{client.username} (ID: {client.id})")
             from services.xray_api import xray
             xray_result = await xray.add_client(
                 email=f"client_{client.id}",
-                uuid=sub.xray_uuid,
+                uuid=None,  # ← НЕ ПЕРЕДАЁМ UUID
                 expiry_days=config.TRIAL_DAYS
             )
             if xray_result:
+                # ✅ СОХРАНЯЕМ РЕАЛЬНЫЙ UUID ИЗ 3X-UI
+                real_uuid = xray_result.get("uuid")
+                if real_uuid:
+                    sub.xray_uuid = real_uuid
+                    await session.commit()
+                    logger.info(f"✅ Сохранён реальный UUID из 3x-ui: {real_uuid}")
+                
                 link = await xray.get_client_link(f"client_{client.id}")
                 if link:
                     sub.sub_link = link
