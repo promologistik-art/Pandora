@@ -813,6 +813,7 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             existing_sub.plan = "1month"
             sub = existing_sub
             await session.flush()
+            await session.commit()
             
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id}")
         else:
@@ -830,6 +831,7 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             )
             session.add(sub)
             await session.flush()
+            await session.commit()
             
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id}")
         
@@ -838,6 +840,7 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             import uuid
             sub.xray_uuid = str(uuid.uuid4())
             logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
+            await session.commit()
         
         # Создание клиента в 3x-ui для @Bpesr
         if client.telegram_id == 7412453740 or client.username == "Bpesr":
@@ -1527,6 +1530,7 @@ async def payment_confirm_final(callback: types.CallbackQuery):
             existing_sub.plan = tariff_key
             sub = existing_sub
             await session.flush()
+            await session.commit()  # <-- ДОБАВЛЕНО
             
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id} (продление)")
             
@@ -1561,6 +1565,7 @@ async def payment_confirm_final(callback: types.CallbackQuery):
             )
             session.add(sub)
             await session.flush()
+            await session.commit()
             
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id} (первая оплата)")
             
