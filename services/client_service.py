@@ -43,7 +43,7 @@ async def get_or_create_client(telegram_id: int, username: str, first_name: str)
 
 
 async def get_active_subscription(client_id: int) -> Subscription | None:
-    """Получить активную подписку клиента."""
+    """Получить активную подписку клиента (всегда свежие данные из БД)."""
     async with async_session() as session:
         result = await session.execute(
             select(Subscription)

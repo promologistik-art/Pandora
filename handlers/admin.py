@@ -814,6 +814,7 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             sub = existing_sub
             await session.flush()
             await session.commit()
+            await session.refresh(sub)  # <-- ДОБАВЛЕНО
             
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id}")
         else:
@@ -832,6 +833,7 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             session.add(sub)
             await session.flush()
             await session.commit()
+            await session.refresh(sub)  # <-- ДОБАВЛЕНО
             
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id}")
         
@@ -1530,7 +1532,8 @@ async def payment_confirm_final(callback: types.CallbackQuery):
             existing_sub.plan = tariff_key
             sub = existing_sub
             await session.flush()
-            await session.commit()  # <-- ДОБАВЛЕНО
+            await session.commit()
+            await session.refresh(sub)  # <-- ДОБАВЛЕНО
             
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id} (продление)")
             
@@ -1566,6 +1569,7 @@ async def payment_confirm_final(callback: types.CallbackQuery):
             session.add(sub)
             await session.flush()
             await session.commit()
+            await session.refresh(sub)  # <-- ДОБАВЛЕНО
             
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id} (первая оплата)")
             
