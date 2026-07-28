@@ -28,14 +28,16 @@ class Migration:
                 )
             """
         },
-        # ✅ НОВАЯ МИГРАЦИЯ: изменение колонки xray_uuid
+        # ✅ ИСПРАВЛЕНО: разбито на две отдельные миграции
         {
-            "name": "update_xray_uuid_nullable",
-            "description": "Изменение колонки xray_uuid в таблице subscriptions (nullable, без default)",
-            "sql": """
-                ALTER TABLE subscriptions ALTER COLUMN xray_uuid DROP DEFAULT;
-                ALTER TABLE subscriptions ALTER COLUMN xray_uuid DROP NOT NULL;
-            """
+            "name": "drop_xray_uuid_default",
+            "description": "Удаление DEFAULT у колонки xray_uuid в таблице subscriptions",
+            "sql": "ALTER TABLE subscriptions ALTER COLUMN xray_uuid DROP DEFAULT"
+        },
+        {
+            "name": "drop_xray_uuid_not_null",
+            "description": "Удаление NOT NULL у колонки xray_uuid в таблице subscriptions",
+            "sql": "ALTER TABLE subscriptions ALTER COLUMN xray_uuid DROP NOT NULL"
         },
     ]
     
@@ -48,4 +50,8 @@ class Migration:
                 await conn.execute(text(migration["sql"]))
                 logger.info(f"✅ {migration['name']} применена")
             except Exception as e:
-                logger.warning(f"❌ Ошибка при миграции {migration['name']}: {e}")
+                # Если колонка уже существует или другие ошибки — логируем, но не прерываем
+                if "already exists" in str(e) or "does not exist" in str(e):
+                    logger.warning(f"⚠️ {migration['name']} пропущена (уже применена или отсутствует): {e}")
+                else:
+                    logger.warning(f"❌ Ошибка при миграции {migration['name']}: {e}")
