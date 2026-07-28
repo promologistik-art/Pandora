@@ -91,7 +91,8 @@ class XRayAPI:
     async def check_health(self) -> bool:
         """Проверка доступности 3x-ui."""
         try:
-            data = await self._api_get("/panel/api/inbounds/list")
+            # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
+            data = await self._api_get("/api/inbounds/list")
             if data and data.get("success"):
                 logger.info("3x-ui health check: OK")
                 return True
@@ -104,7 +105,8 @@ class XRayAPI:
 
     async def _get_inbound(self) -> dict | None:
         """Получить информацию о inbound."""
-        data = await self._api_get("/panel/api/inbounds/list")
+        # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
+        data = await self._api_get("/api/inbounds/list")
         if not data or not data.get("success"):
             logger.error("3x-ui: не удалось получить список inbound")
             return None
@@ -119,7 +121,8 @@ class XRayAPI:
 
     async def _get_client_uuid_by_email(self, email: str) -> str | None:
         """Получить реальный UUID клиента по email из 3x-ui."""
-        data = await self._api_get("/panel/api/inbounds/list")
+        # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
+        data = await self._api_get("/api/inbounds/list")
         if not data or not data.get("success"):
             logger.error("3x-ui: не удалось получить список inbound")
             return None
@@ -137,7 +140,6 @@ class XRayAPI:
         
         return None
 
-    # ✅ ИЗМЕНЕНИЕ: uuid теперь опциональный (None — 3x-ui создаст сам)
     async def add_client(self, email: str, uuid: str = None, expiry_days: int = 30) -> dict | None:
         """Добавить клиента в 3x-ui с указанием срока действия."""
         logger.info(f"3x-ui: НАЧАЛО создания клиента {email}, срок {expiry_days} дней")
@@ -152,7 +154,6 @@ class XRayAPI:
 
         auth = secrets.token_hex(8)
         
-        # Считаем expiryTime в миллисекундах
         if expiry_days > 0:
             expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
         else:
@@ -160,7 +161,6 @@ class XRayAPI:
 
         clients = settings.get("clients", [])
         
-        # ✅ Формируем данные клиента
         client_data = {
             "email": email,
             "enable": True,
@@ -176,7 +176,6 @@ class XRayAPI:
             "reset": 0,
         }
         
-        # ✅ Если UUID передан — используем, если нет — 3x-ui создаст сам
         if uuid:
             client_data["id"] = uuid
             logger.info(f"3x-ui: передан UUID {uuid}")
@@ -205,15 +204,15 @@ class XRayAPI:
             "subSortIndex": inbound.get("subSortIndex", 1),
         }
 
+        # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
         result = await self._api_post(
-            f"/panel/api/inbounds/update/{config.XUI_INBOUND_ID}",
+            f"/api/inbounds/update/{config.XUI_INBOUND_ID}",
             update_data
         )
 
         if result and result.get("success"):
             logger.info(f"3x-ui: клиент {email} добавлен, действует до {expiry_days} дней")
             
-            # ✅ ЗАБИРАЕМ РЕАЛЬНЫЙ UUID ИЗ 3X-UI
             real_uuid = await self._get_client_uuid_by_email(email)
             if real_uuid:
                 logger.info(f"3x-ui: реальный UUID для {email}: {real_uuid}")
@@ -232,23 +231,15 @@ class XRayAPI:
     async def update_client_expiry(self, email: str, expiry_days: int) -> bool:
         """
         Обновить срок действия существующего клиента без перезагрузки Xray.
-        
-        Args:
-            email: email клиента (client_{id})
-            expiry_days: количество дней до истечения
-        
-        Returns:
-            True если успешно, False если ошибка
         """
         logger.info(f"3x-ui: обновление срока для {email} до {expiry_days} дней")
         
-        # 1. Получаем список inbound'ов
-        data = await self._api_get("/panel/api/inbounds/list")
+        # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
+        data = await self._api_get("/api/inbounds/list")
         if not data or not data.get("success"):
             logger.error("3x-ui: не удалось получить список inbound")
             return False
         
-        # 2. Ищем клиента по email во всех inbound'ах
         inbounds = data.get("obj", [])
         for inbound in inbounds:
             settings = inbound.get("settings", {})
@@ -259,9 +250,8 @@ class XRayAPI:
             for client in clients:
                 if client.get("email") == email:
                     inbound_id = inbound.get("id")
-                    client_id = client.get("id")  # ✅ РЕАЛЬНЫЙ UUID из 3x-ui
+                    client_id = client.get("id")
                     
-                    # 3. Обновляем expiryTime
                     expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
                     
                     update_data = {
@@ -274,9 +264,9 @@ class XRayAPI:
                         "flow": client.get("flow", "xtls-rprx-vision"),
                     }
                     
-                    # 4. Отправляем запрос на обновление
+                    # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
                     result = await self._api_post(
-                        f"/panel/api/inbounds/updateClient/{inbound_id}/{client_id}",
+                        f"/api/inbounds/updateClient/{inbound_id}/{client_id}",
                         update_data
                     )
                     
@@ -343,8 +333,9 @@ class XRayAPI:
             "subSortIndex": inbound.get("subSortIndex", 1),
         }
 
+        # ✅ ИСПРАВЛЕНО: убран /panel (уже есть в XUI_HOST)
         result = await self._api_post(
-            f"/panel/api/inbounds/update/{config.XUI_INBOUND_ID}",
+            f"/api/inbounds/update/{config.XUI_INBOUND_ID}",
             update_data
         )
         return result and result.get("success", False)
