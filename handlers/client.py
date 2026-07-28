@@ -204,7 +204,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
             
             logger.info(f"Новый клиент: {client.id} (@{client.username})")
             
-            # ✅ ИЗМЕНЕНИЕ: сохраняем данные для уведомления ПОСЛЕ сессии
             client_data = {
                 "id": client.id,
                 "first_name": client.first_name,
@@ -262,7 +261,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
                 logger.warning(f"Реферер с ID {ref_arg} не найден")
 
     # ========================================
-    # 4. ✅ ИЗМЕНЕНИЕ: УВЕДОМЛЕНИЕ АДМИНОВ (ВНЕ СЕССИИ)
+    # 4. УВЕДОМЛЕНИЕ АДМИНОВ (ВНЕ СЕССИИ)
     # ========================================
     if is_new_client and client_data:
         for admin_id in config.ADMIN_IDS:
@@ -679,13 +678,20 @@ async def show_tariffs(callback: types.CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("tariff:"))
-async def tariff_selected(callback: types.CallbackQuery):
+async def tariff_selected(callback: types.CallbackQuery, state: FSMContext):
     tariff_key = callback.data.split(":")[1]
     tariff = config.TARIFFS.get(tariff_key)
 
     if not tariff:
         await callback.answer("Тариф не найден")
         return
+
+    # ✅ Сохраняем выбранный тариф в FSM
+    await state.update_data(
+        selected_tariff=tariff_key,
+        selected_tariff_name=tariff['name'],
+        selected_tariff_price=tariff['price']
+    )
 
     await callback.message.edit_text(
         f"<b>✅ Выбран тариф: {tariff['name']}</b>\n"
@@ -706,7 +712,7 @@ async def tariff_selected(callback: types.CallbackQuery):
 # ========================
 
 @router.callback_query(F.data == "payment:confirm")
-async def payment_confirm(callback: types.CallbackQuery):
+async def payment_confirm(callback: types.CallbackQuery, state: FSMContext):
     client = await get_or_create_client(
         callback.from_user.id,
         callback.from_user.username,
@@ -721,6 +727,17 @@ async def payment_confirm(callback: types.CallbackQuery):
         await callback.answer()
         return
 
+    # ✅ Получаем выбранный тариф из FSM
+    data = await state.get_data()
+    tariff_name = data.get("selected_tariff_name", "1 месяц")
+    tariff_price = data.get("selected_tariff_price", 300)
+
+    # ✅ Сохраняем тариф в временные данные для последующего использования
+    await state.update_data(
+        pending_tariff_name=tariff_name,
+        pending_tariff_price=tariff_price
+    )
+
     await callback.message.answer(
         "📝 Пришлите скриншот оплаты или последние 4 цифры номера, с которого перевели.\n"
         "Администратор проверит платёж и активирует подписку."
@@ -728,12 +745,8 @@ async def payment_confirm(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# ========================================
-# ✅ ИЗМЕНЕНИЕ: ОПЛАТА ПО 4 ЦИФРАМ
-# ========================================
-
 @router.message(F.text, F.text.regexp(r"^\d{4}$"))
-async def payment_phone_digits(message: types.Message):
+async def payment_phone_digits(message: types.Message, state: FSMContext):
     client = await get_or_create_client(
         message.from_user.id,
         message.from_user.username,
@@ -747,7 +760,11 @@ async def payment_phone_digits(message: types.Message):
         )
         return
 
-    # ✅ ИЗМЕНЕНИЕ: сохраняем данные для уведомления ПОСЛЕ сессии
+    # ✅ Получаем тариф из FSM
+    data = await state.get_data()
+    tariff_name = data.get("pending_tariff_name", "1 месяц")
+    tariff_price = data.get("pending_tariff_price", 300)
+
     payment_id = None
     client_username = client.username
     client_id = client.id
@@ -763,18 +780,23 @@ async def payment_phone_digits(message: types.Message):
         await session.commit()
         payment_id = payment.id
 
-    # ✅ ИЗМЕНЕНИЕ: УВЕДОМЛЕНИЕ АДМИНОВ (ВНЕ СЕССИИ)
+    # ✅ УВЕДОМЛЕНИЕ АДМИНА С ТАРИФОМ
     for admin_id in config.ADMIN_IDS:
         try:
             await message.bot.send_message(
                 admin_id,
                 f"🔔 <b>Новый платёж</b>\n"
                 f"Клиент: @{client_username} (ID: {client_id})\n"
-                f"Последние 4 цифры: <code>{message.text}</code>",
+                f"Тариф: {tariff_name} — {tariff_price} руб.\n"
+                f"Последние 4 цифры: <code>{message.text}</code>\n\n"
+                f"<i>Проверьте поступление платежа и подтвердите.</i>",
                 reply_markup=payment_confirm_keyboard(payment_id)
             )
         except Exception as e:
             logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
+
+    # ✅ Очищаем FSM после использования
+    await state.clear()
 
     await message.answer(
         "✅ Платёж зарегистрирован. Ожидайте подтверждения.\n"
@@ -782,12 +804,8 @@ async def payment_phone_digits(message: types.Message):
     )
 
 
-# ========================================
-# ✅ ИЗМЕНЕНИЕ: ОПЛАТА ПО СКРИНШОТУ
-# ========================================
-
 @router.message(F.photo)
-async def payment_screenshot(message: types.Message):
+async def payment_screenshot(message: types.Message, state: FSMContext):
     client = await get_or_create_client(
         message.from_user.id,
         message.from_user.username,
@@ -801,7 +819,11 @@ async def payment_screenshot(message: types.Message):
         )
         return
 
-    # ✅ ИЗМЕНЕНИЕ: сохраняем данные для уведомления ПОСЛЕ сессии
+    # ✅ Получаем тариф из FSM
+    data = await state.get_data()
+    tariff_name = data.get("pending_tariff_name", "1 месяц")
+    tariff_price = data.get("pending_tariff_price", 300)
+
     payment_id = None
     client_username = client.username
     client_id = client.id
@@ -817,7 +839,7 @@ async def payment_screenshot(message: types.Message):
         await session.commit()
         payment_id = payment.id
 
-    # ✅ ИЗМЕНЕНИЕ: УВЕДОМЛЕНИЕ АДМИНОВ (ВНЕ СЕССИИ)
+    # ✅ УВЕДОМЛЕНИЕ АДМИНА С ТАРИФОМ
     for admin_id in config.ADMIN_IDS:
         try:
             await message.bot.send_photo(
@@ -825,12 +847,17 @@ async def payment_screenshot(message: types.Message):
                 photo_file_id,
                 caption=(
                     f"🔔 <b>Новый платёж (скриншот)</b>\n"
-                    f"Клиент: @{client_username} (ID: {client_id})"
+                    f"Клиент: @{client_username} (ID: {client_id})\n"
+                    f"Тариф: {tariff_name} — {tariff_price} руб.\n\n"
+                    f"<i>Проверьте поступление платежа и подтвердите.</i>"
                 ),
                 reply_markup=payment_confirm_keyboard(payment_id)
             )
         except Exception as e:
             logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
+
+    # ✅ Очищаем FSM после использования
+    await state.clear()
 
     await message.answer(
         "✅ Скриншот получен. Ожидайте подтверждения.\n"

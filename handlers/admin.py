@@ -813,12 +813,13 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             await session.commit()
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id}")
             
-            # ✅ Обновляем клиента в 3x-ui без перезагрузки (только для @Bpesr)
+            # ✅ Обновляем клиента в 3x-ui (уже существует)
             if client.telegram_id == 7412453740 or client.username == "Bpesr":
                 await xray.update_client_expiry(
                     email=f"client_{client.id}",
                     expiry_days=(sub.expires_at - date.today()).days
                 )
+                logger.info(f"✅ Обновлён срок для клиента {client.id} в 3x-ui до {sub.expires_at}")
         else:
             await session.execute(
                 text("UPDATE subscriptions SET status = 'expired' WHERE client_id = :uid AND status = 'active'"),
@@ -836,36 +837,26 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             await session.commit()
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id}")
             
-            # ✅ Создаём клиента в 3x-ui (только для @Bpesr)
+            # ✅ Проверяем UUID
+            if not sub.xray_uuid or len(sub.xray_uuid) < 36:
+                import uuid
+                sub.xray_uuid = str(uuid.uuid4())
+                logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
+                await session.commit()
+            
+            # ✅ Обновляем клиента в 3x-ui (уже существует от триала)
             if client.telegram_id == 7412453740 or client.username == "Bpesr":
-                if not sub.xray_uuid or len(sub.xray_uuid) < 36:
-                    import uuid
-                    sub.xray_uuid = str(uuid.uuid4())
-                    await session.commit()
-                
-                xray_result = await xray.add_client(
+                await xray.update_client_expiry(
                     email=f"client_{client.id}",
-                    uuid=sub.xray_uuid,
-                    expiry_days=days
+                    expiry_days=(sub.expires_at - date.today()).days
                 )
-                if xray_result:
-                    link = await xray.get_client_link(f"client_{client.id}")
-                    if link:
-                        sub.sub_link = link
-                        await session.commit()
-                        logger.info(f"✅ Ссылка получена через API: {link}")
-                    else:
-                        sub_link = await get_free_sub_link(session)
-                        sub.sub_link = sub_link
-                        logger.warning("⚠️ Ссылка через API не получена, использована SUB_LINKS")
-                else:
-                    sub_link = await get_free_sub_link(session)
-                    sub.sub_link = sub_link
-                    logger.error("❌ Не удалось создать клиента в 3x-ui, использована SUB_LINKS")
-            else:
-                sub_link = await get_free_sub_link(session)
-                sub.sub_link = sub_link
-                logger.info(f"❌ Старая схема для клиента {client.id}")
+                logger.info(f"✅ Обновлён срок для клиента {client.id} в 3x-ui до {sub.expires_at}")
+
+        # ✅ Если ссылка пустая — берём из пула
+        if not sub.sub_link:
+            sub_link = await get_free_sub_link(session)
+            sub.sub_link = sub_link
+            await session.commit()
 
         event = EventLog(
             client_id=client.id,
@@ -1526,12 +1517,13 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                 logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
                 await session.commit()
             
-            # ✅ Обновляем клиента в 3x-ui без перезагрузки (только для @Bpesr)
+            # ✅ Обновляем клиента в 3x-ui (уже существует)
             if client.telegram_id == 7412453740 or client.username == "Bpesr":
                 await xray.update_client_expiry(
                     email=f"client_{client.id}",
                     expiry_days=(sub.expires_at - date.today()).days
                 )
+                logger.info(f"✅ Обновлён срок для клиента {client.id} в 3x-ui до {sub.expires_at}")
         else:
             # СОЗДАЁМ НОВУЮ ПОДПИСКУ
             await session.execute(
@@ -1556,31 +1548,19 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                 logger.warning(f"UUID для подписки {sub.id} был пуст, сгенерирован новый: {sub.xray_uuid}")
                 await session.commit()
             
-            # ✅ Создаём клиента в 3x-ui (только для @Bpesr)
+            # ✅ Обновляем клиента в 3x-ui (уже существует от триала)
             if client.telegram_id == 7412453740 or client.username == "Bpesr":
-                xray_result = await xray.add_client(
+                await xray.update_client_expiry(
                     email=f"client_{client.id}",
-                    uuid=sub.xray_uuid,
-                    expiry_days=tariff["days"]
+                    expiry_days=(sub.expires_at - date.today()).days
                 )
-                if xray_result:
-                    link = await xray.get_client_link(f"client_{client.id}")
-                    if link:
-                        sub.sub_link = link
-                        await session.commit()
-                        logger.info(f"✅ Ссылка получена через API: {link}")
-                    else:
-                        sub_link = await get_free_sub_link(session)
-                        sub.sub_link = sub_link
-                        logger.warning("⚠️ Ссылка через API не получена, использована SUB_LINKS")
-                else:
-                    sub_link = await get_free_sub_link(session)
-                    sub.sub_link = sub_link
-                    logger.error("❌ Не удалось создать клиента в 3x-ui, использована SUB_LINKS")
-            else:
-                sub_link = await get_free_sub_link(session)
-                sub.sub_link = sub_link
-                logger.info(f"❌ Старая схема для клиента {client.id}")
+                logger.info(f"✅ Обновлён срок для клиента {client.id} в 3x-ui до {sub.expires_at}")
+
+        # ✅ Если ссылка пустая — берём из пула
+        if not sub.sub_link:
+            sub_link = await get_free_sub_link(session)
+            sub.sub_link = sub_link
+            await session.commit()
 
         # ========================================
         # РЕФЕРАЛЬНАЯ ПРОГРАММА (ТОЛЬКО ПРИ ПЕРВОЙ ОПЛАТЕ)
