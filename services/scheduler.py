@@ -6,7 +6,7 @@ from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 
 from config import config
 from database.engine import async_session
@@ -174,6 +174,22 @@ async def check_expiring_subscriptions(bot: Bot):
         for sub in subs_today:
             client = await session.get(Client, sub.client_id)
             if client:
+                # Проверяем, есть ли у клиента ДРУГАЯ активная подписка
+                other_active = await session.execute(
+                    select(Subscription)
+                    .where(Subscription.client_id == client.id)
+                    .where(Subscription.status == "active")
+                    .where(Subscription.expires_at > today)
+                    .where(Subscription.id != sub.id)
+                )
+                if other_active.scalar_one_or_none():
+                    # Если есть другая активная подписка — просто деактивируем старую, не уведомляя
+                    sub.status = "expired"
+                    await session.commit()
+                    logger.info(f"Подписка {sub.id} для клиента {client.id} деактивирована (есть другая активная подписка)")
+                    continue
+                
+                # Нет другой подписки — отправляем уведомление
                 sub.status = "expired"
                 await session.commit()
 
