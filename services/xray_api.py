@@ -53,7 +53,7 @@ class XRayAPI:
             logger.error(f"3x-ui: ошибка GET {path} - {e}")
             return None
 
-    async def _api_post(self, path: str, json_data: dict) -> dict | None:
+    async def _api_post(self, path: str, json_data: dict = None) -> dict | None:
         """POST запрос с Bearer-токеном."""
         if not self.api_token:
             logger.error("3x-ui: API-токен не настроен! Добавьте XUI_API_TOKEN в .env")
@@ -68,7 +68,7 @@ class XRayAPI:
         try:
             url = f"{self.base_url}{path}"
             logger.info(f"3x-ui POST: {url}")
-            resp = await session.post(url, json=json_data, headers=headers)
+            resp = await session.post(url, json=json_data or {}, headers=headers)
             logger.info(f"3x-ui Response: {resp.status_code}")
 
             if resp.status_code == 403:
@@ -188,6 +188,68 @@ class XRayAPI:
             }
         logger.error(f"3x-ui: ошибка добавления клиента - {result}")
         return None
+
+    # ✅ НОВЫЙ МЕТОД: обновление срока клиента без перезагрузки Xray
+    async def update_client_expiry(self, email: str, expiry_days: int) -> bool:
+        """
+        Обновить срок действия существующего клиента без перезагрузки Xray.
+        
+        Args:
+            email: email клиента (client_{id})
+            expiry_days: количество дней до истечения
+        
+        Returns:
+            True если успешно, False если ошибка
+        """
+        logger.info(f"3x-ui: обновление срока для {email} до {expiry_days} дней")
+        
+        # 1. Получаем список inbound'ов
+        data = await self._api_get("/panel/api/inbounds/list")
+        if not data or not data.get("success"):
+            logger.error("3x-ui: не удалось получить список inbound")
+            return False
+        
+        # 2. Ищем клиента по email во всех inbound'ах
+        inbounds = data.get("obj", [])
+        for inbound in inbounds:
+            settings = inbound.get("settings", {})
+            if isinstance(settings, str):
+                settings = json.loads(settings)
+            
+            clients = settings.get("clients", [])
+            for client in clients:
+                if client.get("email") == email:
+                    inbound_id = inbound.get("id")
+                    client_id = client.get("id")  # UUID клиента
+                    
+                    # 3. Обновляем expiryTime
+                    expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
+                    
+                    update_data = {
+                        "id": client_id,
+                        "email": email,
+                        "enable": True,
+                        "expiryTime": expiry_time,
+                        "limitIp": client.get("limitIp", 3),
+                        "totalGB": client.get("totalGB", 0),
+                        "flow": client.get("flow", "xtls-rprx-vision"),
+                    }
+                    
+                    # 4. Отправляем запрос на обновление
+                    result = await self._api_post(
+                        f"/panel/api/inbounds/updateClient/{inbound_id}/{client_id}",
+                        update_data
+                    )
+                    
+                    if result and result.get("success"):
+                        logger.info(f"3x-ui: ✅ срок для {email} обновлён до {expiry_days} дней (inbound {inbound_id})")
+                        return True
+                    else:
+                        logger.error(f"3x-ui: ❌ ошибка обновления {email} в inbound {inbound_id}: {result}")
+                        return False
+        
+        logger.error(f"3x-ui: ❌ клиент {email} не найден ни в одном inbound")
+        return False
 
     async def get_client_link(self, email: str) -> str | None:
         """Получить ссылку на клиента (собираем вручную)."""
