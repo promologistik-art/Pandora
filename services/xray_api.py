@@ -189,7 +189,6 @@ class XRayAPI:
         logger.error(f"3x-ui: ошибка добавления клиента - {result}")
         return None
 
-    # ✅ НОВЫЙ МЕТОД: обновление срока клиента без перезагрузки Xray
     async def update_client_expiry(self, email: str, expiry_days: int) -> bool:
         """
         Обновить срок действия существующего клиента без перезагрузки Xray.
@@ -220,7 +219,7 @@ class XRayAPI:
             for client in clients:
                 if client.get("email") == email:
                     inbound_id = inbound.get("id")
-                    client_id = client.get("id")  # UUID клиента
+                    client_id = client.get("id")  # ✅ РЕАЛЬНЫЙ UUID из 3x-ui
                     
                     # 3. Обновляем expiryTime
                     expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
@@ -254,16 +253,13 @@ class XRayAPI:
     async def get_client_link(self, email: str) -> str | None:
         """Получить ссылку на клиента (собираем вручную)."""
         try:
-            # Берём первую ссылку из SUB_LINKS как шаблон
             if config.SUB_LINKS and len(config.SUB_LINKS) > 0:
                 template = config.SUB_LINKS[0]
-                # Извлекаем базовый URL: https://dashoguz.mooo.com:2096/sub/
                 base = "/".join(template.split("/")[:-1])
                 link = f"{base}/{email}"
                 logger.info(f"3x-ui: сгенерирована ссылка для {email}: {link}")
                 return link
             else:
-                # Если SUB_LINKS нет — используем прямой шаблон
                 link = f"https://dashoguz.mooo.com:2096/sub/{email}"
                 logger.info(f"3x-ui: сгенерирована ссылка (запасной вариант) для {email}: {link}")
                 return link
