@@ -783,6 +783,10 @@ async def extend_subscription_days(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+# ========================
+# ИЗМЕНЕНИЕ: ФУНКЦИЯ ПРОДЛЕНИЯ ПОДПИСКИ
+# ========================
+
 @router.callback_query(F.data.startswith("admin:confirm_extend:"))
 async def extend_subscription_confirm(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -804,18 +808,20 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             await callback.answer()
             return
 
-        # Проверяем, есть ли активная подписка
-        existing_sub = await get_active_subscription(client.id)
+        # ✅ ИЗМЕНЕНИЕ: передаём сессию в функцию
+        existing_sub = await get_active_subscription(client.id, session)
         
         if existing_sub:
             # ПРОДЛЕВАЕМ существующую
             existing_sub.expires_at = existing_sub.expires_at + timedelta(days=days)
             existing_sub.plan = "1month"
             sub = existing_sub
-            await session.flush()
-            await session.commit()
-            await session.refresh(sub)  # <-- ДОБАВЛЕНО
             
+            # ✅ ИЗМЕНЕНИЕ: убран flush(), порядок операций исправлен
+            await session.commit()
+            await session.refresh(sub)
+            
+            # ✅ ИЗМЕНЕНИЕ: логирование ПОСЛЕ refresh()
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id}")
         else:
             # НЕТ активной подписки — деактивируем старые и создаём новую
@@ -831,9 +837,10 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
                 plan="1month",
             )
             session.add(sub)
-            await session.flush()
+            
+            # ✅ ИЗМЕНЕНИЕ: убран flush(), порядок операций исправлен
             await session.commit()
-            await session.refresh(sub)  # <-- ДОБАВЛЕНО
+            await session.refresh(sub)
             
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id}")
         
@@ -1479,6 +1486,10 @@ async def cleanup_subscriptions(callback: types.CallbackQuery):
 # ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА (С ПРОДЛЕНИЕМ И РЕФЕРАЛКОЙ)
 # ========================
 
+# ========================
+# ИЗМЕНЕНИЕ: ФУНКЦИЯ ПОДТВЕРЖДЕНИЯ ПЛАТЕЖА
+# ========================
+
 @router.callback_query(F.data.startswith("admin:payment_confirm_final:"))
 async def payment_confirm_final(callback: types.CallbackQuery):
     """Подтверждение платежа с выбором суммы."""
@@ -1522,7 +1533,8 @@ async def payment_confirm_final(callback: types.CallbackQuery):
         # ========================================
         # 1. ПРОВЕРЯЕМ, ЕСТЬ ЛИ АКТИВНАЯ ПОДПИСКА
         # ========================================
-        existing_sub = await get_active_subscription(client.id)
+        # ✅ ИЗМЕНЕНИЕ: передаём сессию в функцию
+        existing_sub = await get_active_subscription(client.id, session)
 
         if existing_sub:
             # ========================================
@@ -1531,10 +1543,12 @@ async def payment_confirm_final(callback: types.CallbackQuery):
             existing_sub.expires_at = existing_sub.expires_at + timedelta(days=tariff["days"])
             existing_sub.plan = tariff_key
             sub = existing_sub
-            await session.flush()
-            await session.commit()
-            await session.refresh(sub)  # <-- ДОБАВЛЕНО
             
+            # ✅ ИЗМЕНЕНИЕ: убран flush(), порядок операций исправлен
+            await session.commit()
+            await session.refresh(sub)
+            
+            # ✅ ИЗМЕНЕНИЕ: логирование ПОСЛЕ refresh()
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id} (продление)")
             
             # Проверяем UUID
@@ -1567,9 +1581,10 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                 plan=tariff_key,
             )
             session.add(sub)
-            await session.flush()
+            
+            # ✅ ИЗМЕНЕНИЕ: убран flush(), порядок операций исправлен
             await session.commit()
-            await session.refresh(sub)  # <-- ДОБАВЛЕНО
+            await session.refresh(sub)
             
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id} (первая оплата)")
             
@@ -1624,7 +1639,8 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                 await session.commit()
                 
                 # Начисляем бонус рефереру на ЕГО АКТИВНУЮ ПОДПИСКУ
-                referrer_sub = await get_active_subscription(client.referrer_id)
+                # ✅ ИЗМЕНЕНИЕ: передаём сессию в функцию
+                referrer_sub = await get_active_subscription(client.referrer_id, session)
                 if referrer_sub:
                     referrer_sub.expires_at = referrer_sub.expires_at + timedelta(days=config.REFERRAL_BONUS_DAYS)
                     await session.commit()
