@@ -25,9 +25,6 @@ class XRayAPI:
             logger.error("3x-ui: API-токен не настроен! Добавьте XUI_API_TOKEN в .env")
             return None
 
-        # ✅ ОТЛАДКА: показываем первые 10 символов токена
-        logger.info(f"3x-ui: токен (первые 10 символов): {self.api_token[:10]}...")
-
         session = await self._get_session()
         headers = {
             "Authorization": f"Bearer {self.api_token}",
@@ -135,6 +132,7 @@ class XRayAPI:
         
         inbounds = data.get("obj", [])
         for inbound in inbounds:
+            # ✅ Ищем в settings.clients
             settings = inbound.get("settings", {})
             if isinstance(settings, str):
                 settings = json.loads(settings)
@@ -143,6 +141,12 @@ class XRayAPI:
             for client in clients:
                 if client.get("email") == email:
                     return client.get("id")
+            
+            # ✅ Ищем в clientStats (если не нашли в settings)
+            client_stats = inbound.get("clientStats", [])
+            for client in client_stats:
+                if client.get("email") == email:
+                    return client.get("uuid")
         
         return None
 
