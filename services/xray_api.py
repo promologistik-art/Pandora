@@ -20,9 +20,8 @@ class XRayAPI:
         return self._session
 
     async def _api_get(self, path: str) -> dict | None:
-        """GET запрос с Bearer-токеном."""
         if not self.api_token:
-            logger.error("3x-ui: API-токен не настроен! Добавьте XUI_API_TOKEN в .env")
+            logger.error("3x-ui: API-токен не настроен!")
             return None
 
         session = await self._get_session()
@@ -37,29 +36,24 @@ class XRayAPI:
             logger.info(f"3x-ui Response: {resp.status_code}")
             
             if resp.status_code == 403:
-                logger.error("3x-ui: 403 Forbidden — неверный API-токен или недостаточно прав")
+                logger.error("3x-ui: 403 Forbidden — неверный токен")
                 return None
             if resp.status_code == 401:
                 logger.error("3x-ui: 401 Unauthorized — токен недействителен")
                 return None
             if resp.status_code == 404:
-                logger.error("3x-ui: 404 Not Found — проверьте путь или порт")
+                logger.error("3x-ui: 404 Not Found — проверьте путь")
                 return None
 
             resp.raise_for_status()
             return resp.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"3x-ui: HTTP ошибка {path} - {e.response.status_code}")
-            logger.error(f"3x-ui: response body: {e.response.text[:500]}")
-            return None
         except Exception as e:
             logger.error(f"3x-ui: ошибка GET {path} - {e}")
             return None
 
     async def _api_post(self, path: str, json_data: dict = None) -> dict | None:
-        """POST запрос с Bearer-токеном."""
         if not self.api_token:
-            logger.error("3x-ui: API-токен не настроен! Добавьте XUI_API_TOKEN в .env")
+            logger.error("3x-ui: API-токен не настроен!")
             return None
 
         session = await self._get_session()
@@ -75,87 +69,59 @@ class XRayAPI:
             logger.info(f"3x-ui Response: {resp.status_code}")
 
             if resp.status_code == 403:
-                logger.error("3x-ui: 403 Forbidden — неверный API-токен или недостаточно прав")
+                logger.error("3x-ui: 403 Forbidden — неверный токен")
                 return None
             if resp.status_code == 401:
                 logger.error("3x-ui: 401 Unauthorized — токен недействителен")
                 return None
             if resp.status_code == 404:
-                logger.error("3x-ui: 404 Not Found — проверьте путь или порт")
+                logger.error("3x-ui: 404 Not Found — проверьте путь")
                 return None
 
             resp.raise_for_status()
             return resp.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"3x-ui: HTTP ошибка {path} - {e.response.status_code}")
-            logger.error(f"3x-ui: response body: {e.response.text[:500]}")
-            return None
         except Exception as e:
             logger.error(f"3x-ui: ошибка POST {path} - {e}")
             return None
 
     async def check_health(self) -> bool:
-        """Проверка доступности 3x-ui."""
         try:
             data = await self._api_get("/panel/api/inbounds/list")
-            if data and data.get("success"):
-                logger.info("3x-ui health check: OK")
-                return True
-            else:
-                logger.warning(f"3x-ui health check: failed - {data}")
-                return False
-        except Exception as e:
-            logger.error(f"3x-ui health check: error - {e}")
+            return data and data.get("success")
+        except:
             return False
 
     async def _get_inbound(self) -> dict | None:
-        """Получить информацию о inbound."""
         data = await self._api_get("/panel/api/inbounds/list")
         if not data or not data.get("success"):
-            logger.error("3x-ui: не удалось получить список inbound")
             return None
-
-        inbounds = data.get("obj", [])
-        for inbound in inbounds:
+        for inbound in data.get("obj", []):
             if inbound.get("id") == config.XUI_INBOUND_ID:
                 return inbound
-
-        logger.error(f"3x-ui: inbound с ID {config.XUI_INBOUND_ID} не найден")
         return None
 
     async def _get_client_uuid_by_email(self, email: str) -> str | None:
-        """Получить реальный UUID клиента по email из 3x-ui."""
         data = await self._api_get("/panel/api/inbounds/list")
         if not data or not data.get("success"):
-            logger.error("3x-ui: не удалось получить список inbound")
             return None
         
-        inbounds = data.get("obj", [])
-        for inbound in inbounds:
-            # ✅ Ищем в settings.clients
+        for inbound in data.get("obj", []):
             settings = inbound.get("settings", {})
             if isinstance(settings, str):
                 settings = json.loads(settings)
-            
-            clients = settings.get("clients", [])
-            for client in clients:
+            for client in settings.get("clients", []):
                 if client.get("email") == email:
                     return client.get("id")
-            
-            # ✅ Ищем в clientStats (если не нашли в settings)
-            client_stats = inbound.get("clientStats", [])
-            for client in client_stats:
+            for client in inbound.get("clientStats", []):
                 if client.get("email") == email:
                     return client.get("uuid")
-        
         return None
 
     async def add_client(self, email: str, uuid: str = None, expiry_days: int = 30) -> dict | None:
-        """Добавить клиента в 3x-ui с указанием срока действия."""
-        logger.info(f"3x-ui: НАЧАЛО создания клиента {email}, срок {expiry_days} дней")
+        logger.info(f"3x-ui: создание клиента {email}, срок {expiry_days} дней")
         inbound = await self._get_inbound()
         if not inbound:
-            logger.error("3x-ui: inbound не найден, создание клиента невозможно")
+            logger.error("3x-ui: inbound не найден")
             return None
 
         settings = inbound.get("settings", {})
@@ -163,14 +129,9 @@ class XRayAPI:
             settings = json.loads(settings)
 
         auth = secrets.token_hex(8)
-        
-        if expiry_days > 0:
-            expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
-        else:
-            expiry_time = 0
+        expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
 
         clients = settings.get("clients", [])
-        
         client_data = {
             "email": email,
             "enable": True,
@@ -185,20 +146,17 @@ class XRayAPI:
             "security": "auto",
             "reset": 0,
         }
-        
         if uuid:
             client_data["id"] = uuid
-            logger.info(f"3x-ui: передан UUID {uuid}")
-        else:
-            logger.info("3x-ui: UUID не передан, будет создан автоматически")
-        
+
         clients.append(client_data)
         settings["clients"] = clients
 
+        # ✅ ВСЕ ПОЛЯ, ВКЛЮЧАЯ originNodeGuid
         update_data = {
-            "id": config.XUI_INBOUND_ID,
-            "protocol": inbound.get("protocol", "vless"),
-            "port": inbound.get("port", 47725),
+            "id": inbound.get("id"),
+            "protocol": inbound.get("protocol"),
+            "port": inbound.get("port"),
             "listen": inbound.get("listen", ""),
             "remark": inbound.get("remark", ""),
             "enable": inbound.get("enable", True),
@@ -212,6 +170,7 @@ class XRayAPI:
             "shareAddrStrategy": inbound.get("shareAddrStrategy", "listen"),
             "shareAddr": inbound.get("shareAddr", ""),
             "subSortIndex": inbound.get("subSortIndex", 1),
+            "originNodeGuid": inbound.get("originNodeGuid", ""),
         }
 
         result = await self._api_post(
@@ -220,92 +179,55 @@ class XRayAPI:
         )
 
         if result and result.get("success"):
-            logger.info(f"3x-ui: клиент {email} добавлен, действует до {expiry_days} дней")
-            
-            real_uuid = await self._get_client_uuid_by_email(email)
-            if real_uuid:
-                logger.info(f"3x-ui: реальный UUID для {email}: {real_uuid}")
-                return {
-                    "uuid": real_uuid,
-                    "email": email,
-                    "auth": auth,
-                }
-            else:
-                logger.warning(f"3x-ui: не удалось получить реальный UUID для {email}")
-                return None
+            logger.info(f"3x-ui: клиент {email} добавлен")
+            import asyncio
+            for _ in range(5):
+                await asyncio.sleep(1)
+                real_uuid = await self._get_client_uuid_by_email(email)
+                if real_uuid:
+                    logger.info(f"3x-ui: получен UUID {real_uuid}")
+                    return {"uuid": real_uuid, "email": email}
+            logger.warning(f"3x-ui: не удалось получить UUID для {email}")
+            return None
         
-        logger.error(f"3x-ui: ошибка добавления клиента - {result}")
+        logger.error(f"3x-ui: ошибка добавления клиента")
         return None
 
     async def update_client_expiry(self, email: str, expiry_days: int) -> bool:
-        """
-        Обновить срок действия существующего клиента без перезагрузки Xray.
-        """
         logger.info(f"3x-ui: обновление срока для {email} до {expiry_days} дней")
-        
-        data = await self._api_get("/panel/api/inbounds/list")
-        if not data or not data.get("success"):
-            logger.error("3x-ui: не удалось получить список inbound")
+        client_uuid = await self._get_client_uuid_by_email(email)
+        if not client_uuid:
+            logger.error(f"3x-ui: клиент {email} не найден")
             return False
-        
-        inbounds = data.get("obj", [])
-        for inbound in inbounds:
-            settings = inbound.get("settings", {})
-            if isinstance(settings, str):
-                settings = json.loads(settings)
-            
-            clients = settings.get("clients", [])
-            for client in clients:
-                if client.get("email") == email:
-                    inbound_id = inbound.get("id")
-                    client_id = client.get("id")
-                    
-                    expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
-                    
-                    update_data = {
-                        "id": client_id,
-                        "email": email,
-                        "enable": True,
-                        "expiryTime": expiry_time,
-                        "limitIp": client.get("limitIp", 3),
-                        "totalGB": client.get("totalGB", 0),
-                        "flow": client.get("flow", "xtls-rprx-vision"),
-                    }
-                    
-                    result = await self._api_post(
-                        f"/panel/api/inbounds/updateClient/{inbound_id}/{client_id}",
-                        update_data
-                    )
-                    
-                    if result and result.get("success"):
-                        logger.info(f"3x-ui: ✅ срок для {email} обновлён до {expiry_days} дней (inbound {inbound_id})")
-                        return True
-                    else:
-                        logger.error(f"3x-ui: ❌ ошибка обновления {email} в inbound {inbound_id}: {result}")
-                        return False
-        
-        logger.error(f"3x-ui: ❌ клиент {email} не найден ни в одном inbound")
-        return False
+
+        expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
+        update_data = {
+            "id": client_uuid,
+            "email": email,
+            "enable": True,
+            "expiryTime": expiry_time,
+            "limitIp": 3,
+            "totalGB": 0,
+            "flow": "xtls-rprx-vision",
+        }
+        result = await self._api_post(
+            f"/panel/api/inbounds/updateClient/{config.XUI_INBOUND_ID}/{client_uuid}",
+            update_data
+        )
+        return result and result.get("success")
 
     async def get_client_link(self, email: str) -> str | None:
-        """Получить ссылку на клиента (собираем вручную)."""
         try:
             if config.SUB_LINKS and len(config.SUB_LINKS) > 0:
                 template = config.SUB_LINKS[0]
                 base = "/".join(template.split("/")[:-1])
-                link = f"{base}/{email}"
-                logger.info(f"3x-ui: сгенерирована ссылка для {email}: {link}")
-                return link
-            else:
-                link = f"https://dashoguz.mooo.com:2096/sub/{email}"
-                logger.info(f"3x-ui: сгенерирована ссылка (запасной вариант) для {email}: {link}")
-                return link
+                return f"{base}/{email}"
+            return f"https://dashoguz.mooo.com:2096/sub/{email}"
         except Exception as e:
-            logger.error(f"3x-ui: ошибка генерации ссылки для {email} - {e}")
+            logger.error(f"3x-ui: ошибка генерации ссылки - {e}")
             return None
 
     async def remove_client(self, uuid: str) -> bool:
-        """Удалить клиента из 3x-ui."""
         inbound = await self._get_inbound()
         if not inbound:
             return False
@@ -322,9 +244,9 @@ class XRayAPI:
         settings["clients"] = new_clients
 
         update_data = {
-            "id": config.XUI_INBOUND_ID,
-            "protocol": inbound.get("protocol", "vless"),
-            "port": inbound.get("port", 47725),
+            "id": inbound.get("id"),
+            "protocol": inbound.get("protocol"),
+            "port": inbound.get("port"),
             "listen": inbound.get("listen", ""),
             "remark": inbound.get("remark", ""),
             "enable": inbound.get("enable", True),
@@ -338,6 +260,7 @@ class XRayAPI:
             "shareAddrStrategy": inbound.get("shareAddrStrategy", "listen"),
             "shareAddr": inbound.get("shareAddr", ""),
             "subSortIndex": inbound.get("subSortIndex", 1),
+            "originNodeGuid": inbound.get("originNodeGuid", ""),
         }
 
         result = await self._api_post(
