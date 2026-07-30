@@ -12,8 +12,15 @@ db_url = config.DATABASE_URL
 if db_url and db_url.startswith("postgresql://"):
     db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-engine = create_async_engine(db_url, echo=False, pool_size=10, max_overflow=20)
-# ИЗМЕНЕНИЕ: expire_on_commit=True → False (возвращаем исходное поведение)
+# ✅ УСИЛЕННЫЕ НАСТРОЙКИ ПУЛА
+engine = create_async_engine(
+    db_url,
+    echo=False,
+    pool_size=10,
+    max_overflow=20,
+    pool_recycle=300,      # Пересоздавать соединения каждые 5 минут
+    pool_pre_ping=True,    # Проверять соединение перед использованием
+)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -29,10 +36,7 @@ async def get_session() -> AsyncSession:
 async def init_db():
     """Инициализация базы данных с автоматическим добавлением колонок."""
     async with engine.begin() as conn:
-        # Создаём таблицы, если их нет
         await conn.run_sync(Base.metadata.create_all)
         logger.info("Таблицы созданы (если отсутствовали)")
-        
-        # Применяем миграции (добавляем недостающие колонки и таблицы)
         await Migration.apply_all(conn)
         logger.info("База данных инициализирована")
