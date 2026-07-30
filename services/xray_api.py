@@ -2,6 +2,7 @@ import httpx
 import logging
 import secrets
 import json
+import uuid
 from datetime import datetime, timedelta
 from config import config
 
@@ -35,14 +36,8 @@ class XRayAPI:
             resp = await session.get(url, headers=headers)
             logger.info(f"3x-ui Response: {resp.status_code}")
             
-            if resp.status_code == 403:
-                logger.error("3x-ui: 403 Forbidden — неверный токен")
-                return None
-            if resp.status_code == 401:
-                logger.error("3x-ui: 401 Unauthorized — токен недействителен")
-                return None
-            if resp.status_code == 404:
-                logger.error("3x-ui: 404 Not Found — проверьте путь")
+            if resp.status_code in (403, 401, 404):
+                logger.error(f"3x-ui: ошибка {resp.status_code}")
                 return None
 
             resp.raise_for_status()
@@ -68,14 +63,8 @@ class XRayAPI:
             resp = await session.post(url, json=json_data or {}, headers=headers)
             logger.info(f"3x-ui Response: {resp.status_code}")
 
-            if resp.status_code == 403:
-                logger.error("3x-ui: 403 Forbidden — неверный токен")
-                return None
-            if resp.status_code == 401:
-                logger.error("3x-ui: 401 Unauthorized — токен недействителен")
-                return None
-            if resp.status_code == 404:
-                logger.error("3x-ui: 404 Not Found — проверьте путь")
+            if resp.status_code in (403, 401, 404):
+                logger.error(f"3x-ui: ошибка {resp.status_code}")
                 return None
 
             resp.raise_for_status()
@@ -101,6 +90,7 @@ class XRayAPI:
         return None
 
     async def _get_client_uuid_by_email(self, email: str) -> str | None:
+        """Получить UUID клиента по email из settings.clients."""
         data = await self._api_get("/panel/api/inbounds/list")
         if not data or not data.get("success"):
             return None
@@ -109,15 +99,15 @@ class XRayAPI:
             settings = inbound.get("settings", {})
             if isinstance(settings, str):
                 settings = json.loads(settings)
+            
             for client in settings.get("clients", []):
                 if client.get("email") == email:
                     return client.get("id")
-            for client in inbound.get("clientStats", []):
-                if client.get("email") == email:
-                    return client.get("uuid")
+        
         return None
 
-    async def add_client(self, email: str, uuid: str = None, expiry_days: int = 30) -> dict | None:
+    async def add_client(self, email: str, expiry_days: int = 30) -> dict | None:
+        """Создаёт клиента с автоматической генерацией UUID."""
         logger.info(f"3x-ui: создание клиента {email}, срок {expiry_days} дней")
         inbound = await self._get_inbound()
         if not inbound:
@@ -128,11 +118,14 @@ class XRayAPI:
         if isinstance(settings, str):
             settings = json.loads(settings)
 
+        # ✅ ГЕНЕРИРУЕМ UUID В БОТЕ
+        new_uuid = str(uuid.uuid4())
         auth = secrets.token_hex(8)
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
 
         clients = settings.get("clients", [])
         client_data = {
+            "id": new_uuid,
             "email": email,
             "enable": True,
             "flow": "xtls-rprx-vision",
@@ -146,13 +139,10 @@ class XRayAPI:
             "security": "auto",
             "reset": 0,
         }
-        if uuid:
-            client_data["id"] = uuid
-
+        
         clients.append(client_data)
         settings["clients"] = clients
 
-        # ✅ ВСЕ ПОЛЯ, ВКЛЮЧАЯ originNodeGuid
         update_data = {
             "id": inbound.get("id"),
             "protocol": inbound.get("protocol"),
@@ -179,16 +169,12 @@ class XRayAPI:
         )
 
         if result and result.get("success"):
-            logger.info(f"3x-ui: клиент {email} добавлен")
-            import asyncio
-            for _ in range(5):
-                await asyncio.sleep(1)
-                real_uuid = await self._get_client_uuid_by_email(email)
-                if real_uuid:
-                    logger.info(f"3x-ui: получен UUID {real_uuid}")
-                    return {"uuid": real_uuid, "email": email}
-            logger.warning(f"3x-ui: не удалось получить UUID для {email}")
-            return None
+            logger.info(f"3x-ui: клиент {email} добавлен с UUID {new_uuid}")
+            return {
+                "uuid": new_uuid,
+                "email": email,
+                "auth": auth,
+            }
         
         logger.error(f"3x-ui: ошибка добавления клиента")
         return None
