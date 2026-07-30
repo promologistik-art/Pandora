@@ -22,6 +22,7 @@ from keyboards.client_kb import (
 from keyboards.admin_kb import (
     payment_confirm_keyboard, user_profile_keyboard, admin_keyboard
 )
+from services.xray_api import xray
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -377,52 +378,44 @@ async def trial_start(callback: types.CallbackQuery):
         await session.flush()
 
         # ========================================
-        # СОЗДАНИЕ КЛИЕНТА В 3X-UI
+        # ✅ СОЗДАНИЕ КЛИЕНТА В 3X-UI ДЛЯ ВСЕХ
         # ========================================
-        if client.telegram_id == 7412453740 or client.username == "Bpesr":
-            logger.info(f"✅ СОЗДАЕМ ТРИАЛЬНОГО КЛИЕНТА В 3X-UI для @{client.username} (ID: {client.id})")
-            from services.xray_api import xray
+        logger.info(f"✅ СОЗДАЕМ ТРИАЛЬНОГО КЛИЕНТА В 3X-UI для @{client.username} (ID: {client.id})")
+        
+        # ✅ Генерируем UUID заранее
+        import uuid
+        new_uuid = str(uuid.uuid4())
+        sub.xray_uuid = new_uuid
+        await session.commit()
+        
+        xray_result = await xray.add_client(
+            email=f"client_{client.id}",
+            expiry_days=config.TRIAL_DAYS
+        )
+        if xray_result:
+            # ✅ Сохраняем UUID (он уже есть в sub.xray_uuid)
+            real_uuid = xray_result.get("uuid")
+            if real_uuid and real_uuid != new_uuid:
+                sub.xray_uuid = real_uuid
+                await session.commit()
+                logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
             
-            # ✅ Генерируем UUID заранее
-            import uuid
-            new_uuid = str(uuid.uuid4())
-            sub.xray_uuid = new_uuid
-            await session.commit()
-            
-            xray_result = await xray.add_client(
-                email=f"client_{client.id}",
-                expiry_days=config.TRIAL_DAYS
-            )
-            if xray_result:
-                # ✅ Сохраняем UUID (он уже есть в sub.xray_uuid)
-                real_uuid = xray_result.get("uuid")
-                if real_uuid and real_uuid != new_uuid:
-                    sub.xray_uuid = real_uuid
-                    await session.commit()
-                    logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
-                
-                link = await xray.get_client_link(f"client_{client.id}")
-                if link:
-                    sub.sub_link = link
-                    await session.commit()
-                    logger.info(f"✅ Триальная ссылка получена через API: {link}")
-                else:
-                    sub_link = await get_free_sub_link(session)
-                    sub.sub_link = sub_link
-                    await session.commit()
-                    logger.warning("⚠️ Триальная ссылка через API не получена, использована SUB_LINKS")
+            link = await xray.get_client_link(f"client_{client.id}")
+            if link:
+                sub.sub_link = link
+                await session.commit()
+                logger.info(f"✅ Триальная ссылка получена через API: {link}")
             else:
-                # Если не удалось создать клиента — используем SUB_LINKS
                 sub_link = await get_free_sub_link(session)
                 sub.sub_link = sub_link
                 await session.commit()
-                logger.error("❌ Не удалось создать клиента в 3x-ui для триала, использована SUB_LINKS")
+                logger.warning("⚠️ Триальная ссылка через API не получена, использована SUB_LINKS")
         else:
-            # Старая схема для всех остальных
+            # Если не удалось создать клиента — используем SUB_LINKS
             sub_link = await get_free_sub_link(session)
             sub.sub_link = sub_link
             await session.commit()
-            logger.info(f"❌ Старая схема для клиента {client.id}")
+            logger.error("❌ Не удалось создать клиента в 3x-ui для триала, использована SUB_LINKS")
 
         event = EventLog(
             client_id=client.id,

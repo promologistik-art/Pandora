@@ -814,40 +814,37 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             await session.commit()
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id}")
             
-            # ✅ Пересоздаём клиента в 3x-ui
-            if client.telegram_id == 7412453740 or client.username == "Bpesr":
-                old_uuid = sub.xray_uuid
-                
-                # Удаляем старого клиента
-                if old_uuid:
-                    await xray.remove_client(old_uuid)
-                    logger.info(f"🗑️ Удалён старый клиент {old_uuid} для client_{client.id}")
-                
-                # Создаём нового клиента (UUID сгенерирует add_client)
-                xray_result = await xray.add_client(
-                    email=f"client_{client.id}",
-                    expiry_days=(sub.expires_at - date.today()).days
-                )
-                
-                if xray_result:
-                    real_uuid = xray_result.get("uuid")
-                    if real_uuid:
-                        sub.xray_uuid = real_uuid
-                        await session.commit()
-                        logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
-                    
-                    new_link = await xray.get_client_link(f"client_{client.id}")
-                    if new_link:
-                        sub.sub_link = new_link
-                        await session.commit()
-                        logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
-                        link_updated = True
-                else:
-                    sub_link = await get_free_sub_link(session)
-                    sub.sub_link = sub_link
+            # ✅ Пересоздаём клиента в 3x-ui для ВСЕХ
+            old_uuid = sub.xray_uuid
+            
+            if old_uuid:
+                await xray.remove_client(old_uuid)
+                logger.info(f"🗑️ Удалён старый клиент {old_uuid} для client_{client.id}")
+            
+            xray_result = await xray.add_client(
+                email=f"client_{client.id}",
+                expiry_days=(sub.expires_at - date.today()).days
+            )
+            
+            if xray_result:
+                real_uuid = xray_result.get("uuid")
+                if real_uuid:
+                    sub.xray_uuid = real_uuid
                     await session.commit()
+                    logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
+                
+                new_link = await xray.get_client_link(f"client_{client.id}")
+                if new_link:
+                    sub.sub_link = new_link
+                    await session.commit()
+                    logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
                     link_updated = True
-                    logger.error("❌ Не удалось создать клиента в 3x-ui")
+            else:
+                sub_link = await get_free_sub_link(session)
+                sub.sub_link = sub_link
+                await session.commit()
+                link_updated = True
+                logger.error("❌ Не удалось создать клиента в 3x-ui")
         else:
             await session.execute(
                 text("UPDATE subscriptions SET status = 'expired' WHERE client_id = :uid AND status = 'active'"),
@@ -866,37 +863,31 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             await session.commit()
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id}")
             
-            # ✅ Создаём клиента в 3x-ui
-            if client.telegram_id == 7412453740 or client.username == "Bpesr":
-                xray_result = await xray.add_client(
-                    email=f"client_{client.id}",
-                    expiry_days=(sub.expires_at - date.today()).days
-                )
-                
-                if xray_result:
-                    real_uuid = xray_result.get("uuid")
-                    if real_uuid:
-                        sub.xray_uuid = real_uuid
-                        await session.commit()
-                        logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
-                    
-                    new_link = await xray.get_client_link(f"client_{client.id}")
-                    if new_link:
-                        sub.sub_link = new_link
-                        await session.commit()
-                        logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
-                        link_updated = True
-                else:
-                    sub_link = await get_free_sub_link(session)
-                    sub.sub_link = sub_link
+            # ✅ Создаём клиента в 3x-ui для ВСЕХ
+            xray_result = await xray.add_client(
+                email=f"client_{client.id}",
+                expiry_days=(sub.expires_at - date.today()).days
+            )
+            
+            if xray_result:
+                real_uuid = xray_result.get("uuid")
+                if real_uuid:
+                    sub.xray_uuid = real_uuid
                     await session.commit()
+                    logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
+                
+                new_link = await xray.get_client_link(f"client_{client.id}")
+                if new_link:
+                    sub.sub_link = new_link
+                    await session.commit()
+                    logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
                     link_updated = True
-                    logger.error("❌ Не удалось создать клиента в 3x-ui")
             else:
                 sub_link = await get_free_sub_link(session)
                 sub.sub_link = sub_link
                 await session.commit()
-                logger.info(f"❌ Старая схема для клиента {client.id}")
+                link_updated = True
+                logger.error("❌ Не удалось создать клиента в 3x-ui")
 
         # ✅ Если ссылка пустая — берём из пула
         if not sub.sub_link:
@@ -1558,40 +1549,37 @@ async def payment_confirm_final(callback: types.CallbackQuery):
             await session.commit()
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id} (продление)")
             
-            # ✅ Пересоздаём клиента в 3x-ui
-            if client.telegram_id == 7412453740 or client.username == "Bpesr":
-                old_uuid = sub.xray_uuid
-                
-                # Удаляем старого клиента
-                if old_uuid:
-                    await xray.remove_client(old_uuid)
-                    logger.info(f"🗑️ Удалён старый клиент {old_uuid} для client_{client.id}")
-                
-                # Создаём нового клиента (UUID сгенерирует add_client)
-                xray_result = await xray.add_client(
-                    email=f"client_{client.id}",
-                    expiry_days=(sub.expires_at - date.today()).days
-                )
-                
-                if xray_result:
-                    real_uuid = xray_result.get("uuid")
-                    if real_uuid:
-                        sub.xray_uuid = real_uuid
-                        await session.commit()
-                        logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
-                    
-                    new_link = await xray.get_client_link(f"client_{client.id}")
-                    if new_link:
-                        sub.sub_link = new_link
-                        await session.commit()
-                        logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
-                        link_updated = True
-                else:
-                    sub_link = await get_free_sub_link(session)
-                    sub.sub_link = sub_link
+            # ✅ Пересоздаём клиента в 3x-ui для ВСЕХ
+            old_uuid = sub.xray_uuid
+            
+            if old_uuid:
+                await xray.remove_client(old_uuid)
+                logger.info(f"🗑️ Удалён старый клиент {old_uuid} для client_{client.id}")
+            
+            xray_result = await xray.add_client(
+                email=f"client_{client.id}",
+                expiry_days=(sub.expires_at - date.today()).days
+            )
+            
+            if xray_result:
+                real_uuid = xray_result.get("uuid")
+                if real_uuid:
+                    sub.xray_uuid = real_uuid
                     await session.commit()
+                    logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
+                
+                new_link = await xray.get_client_link(f"client_{client.id}")
+                if new_link:
+                    sub.sub_link = new_link
+                    await session.commit()
+                    logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
                     link_updated = True
-                    logger.error("❌ Не удалось создать клиента в 3x-ui")
+            else:
+                sub_link = await get_free_sub_link(session)
+                sub.sub_link = sub_link
+                await session.commit()
+                link_updated = True
+                logger.error("❌ Не удалось создать клиента в 3x-ui")
         else:
             # СОЗДАЁМ НОВУЮ ПОДПИСКУ
             await session.execute(
@@ -1611,37 +1599,31 @@ async def payment_confirm_final(callback: types.CallbackQuery):
             await session.commit()
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id} (первая оплата)")
             
-            # ✅ Создаём клиента в 3x-ui
-            if client.telegram_id == 7412453740 or client.username == "Bpesr":
-                xray_result = await xray.add_client(
-                    email=f"client_{client.id}",
-                    expiry_days=(sub.expires_at - date.today()).days
-                )
-                
-                if xray_result:
-                    real_uuid = xray_result.get("uuid")
-                    if real_uuid:
-                        sub.xray_uuid = real_uuid
-                        await session.commit()
-                        logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
-                    
-                    new_link = await xray.get_client_link(f"client_{client.id}")
-                    if new_link:
-                        sub.sub_link = new_link
-                        await session.commit()
-                        logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
-                        link_updated = True
-                else:
-                    sub_link = await get_free_sub_link(session)
-                    sub.sub_link = sub_link
+            # ✅ Создаём клиента в 3x-ui для ВСЕХ
+            xray_result = await xray.add_client(
+                email=f"client_{client.id}",
+                expiry_days=(sub.expires_at - date.today()).days
+            )
+            
+            if xray_result:
+                real_uuid = xray_result.get("uuid")
+                if real_uuid:
+                    sub.xray_uuid = real_uuid
                     await session.commit()
+                    logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
+                
+                new_link = await xray.get_client_link(f"client_{client.id}")
+                if new_link:
+                    sub.sub_link = new_link
+                    await session.commit()
+                    logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
                     link_updated = True
-                    logger.error("❌ Не удалось создать клиента в 3x-ui")
             else:
                 sub_link = await get_free_sub_link(session)
                 sub.sub_link = sub_link
                 await session.commit()
-                logger.info(f"❌ Старая схема для клиента {client.id}")
+                link_updated = True
+                logger.error("❌ Не удалось создать клиента в 3x-ui")
 
         # ✅ Если ссылка пустая — берём из пула
         if not sub.sub_link:
