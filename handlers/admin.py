@@ -1442,29 +1442,74 @@ async def broadcast_start(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(AdminStates.waiting_broadcast_text, F.text)
+# ✅ ИСПРАВЛЕНО: рассылка с фото/видео/документами
+@router.message(AdminStates.waiting_broadcast_text)
 async def broadcast_send(message: types.Message, state: FSMContext):
+    """Отправляет рассылку: текст + медиа (фото, видео, документы)."""
     if not is_admin(message.from_user.id):
         return
 
-    text = message.text
+    # Получаем текст (из текстового сообщения или подписи к медиа)
+    text = message.text or message.caption or ""
 
+    # Получаем список активных клиентов
     async with async_session() as session:
         result = await session.execute(
             select(Client.telegram_id).where(Client.status == "active")
         )
         clients = result.scalars().all()
 
+    if not clients:
+        await message.answer("ℹ️ Нет активных клиентов для рассылки.")
+        await state.clear()
+        return
+
     success = 0
     for tid in clients:
         try:
-            await message.bot.send_message(
-                tid,
-                f"📢 <b>Рассылка</b>\n\n{text}"
-            )
+            # Отправляем в зависимости от типа медиа
+            if message.photo:
+                await message.bot.send_photo(
+                    tid,
+                    message.photo[-1].file_id,
+                    caption=text
+                )
+            elif message.video:
+                await message.bot.send_video(
+                    tid,
+                    message.video.file_id,
+                    caption=text
+                )
+            elif message.document:
+                await message.bot.send_document(
+                    tid,
+                    message.document.file_id,
+                    caption=text
+                )
+            elif message.animation:  # GIF
+                await message.bot.send_animation(
+                    tid,
+                    message.animation.file_id,
+                    caption=text
+                )
+            elif message.audio:
+                await message.bot.send_audio(
+                    tid,
+                    message.audio.file_id,
+                    caption=text
+                )
+            elif message.voice:
+                await message.bot.send_voice(
+                    tid,
+                    message.voice.file_id,
+                    caption=text
+                )
+            else:
+                # Только текст
+                await message.bot.send_message(tid, text)
             success += 1
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение {tid}: {e}")
 
     await message.answer(
         f"✅ <b>Рассылка завершена</b>\n\n"
