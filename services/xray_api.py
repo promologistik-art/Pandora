@@ -3,6 +3,7 @@ import logging
 import secrets
 import json
 import uuid
+import asyncio
 from datetime import datetime, timedelta
 from config import config
 
@@ -107,7 +108,7 @@ class XRayAPI:
         return None
 
     async def add_client(self, email: str, expiry_days: int = 30) -> dict | None:
-        """Создаёт клиента во всех активных inbound'ах и принудительно устанавливает срок."""
+        """Создаёт клиента и привязывает ко всем активным inbound'ам."""
         logger.info(f"3x-ui: создание клиента {email}, срок {expiry_days} дней")
         
         # 1. Получаем все активные inbound'ы
@@ -118,19 +119,19 @@ class XRayAPI:
         
         logger.info(f"3x-ui: найдено {len(active_inbounds)} активных inbound'ов")
         
-        # 2. Генерируем UUID один раз для всех inbound'ов
+        # 2. Генерируем UUID один раз для клиента
         new_uuid = str(uuid.uuid4())
         auth = secrets.token_hex(8)
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
         
         success_count = 0
         
+        # 3. Добавляем клиента в КАЖДЫЙ inbound (привязываем inbound'ы к клиенту)
         for inbound in active_inbounds:
             inbound_id = inbound.get("id")
             remark = inbound.get("remark", inbound_id)
-            logger.info(f"3x-ui: добавляем клиента в inbound {inbound_id} ({remark})")
+            logger.info(f"3x-ui: привязываем клиента к inbound {inbound_id} ({remark})")
             
-            # 3. Получаем текущих клиентов inbound'а
             settings = inbound.get("settings", {})
             if isinstance(settings, str):
                 settings = json.loads(settings)
@@ -140,18 +141,16 @@ class XRayAPI:
             
             clients = settings.get("clients", [])
             
-            # 4. Проверяем, нет ли уже такого клиента
-            exists = any(c.get("email") == email for c in clients)
-            if exists:
+            # Проверяем, есть ли уже клиент в этом inbound'е
+            if any(c.get("email") == email for c in clients):
                 logger.info(f"3x-ui: клиент {email} уже есть в inbound {inbound_id}, пропускаем")
                 continue
             
-            # 5. Добавляем клиента БЕЗ flow
+            # Добавляем клиента в этот inbound
             client_data = {
                 "id": new_uuid,
                 "email": email,
                 "enable": True,
-                # ✅ flow убран полностью
                 "auth": auth,
                 "password": auth,
                 "subId": email,
@@ -165,7 +164,6 @@ class XRayAPI:
             clients.append(client_data)
             settings["clients"] = clients
             
-            # 6. Обновляем inbound
             update_data = {
                 "id": inbound_id,
                 "protocol": inbound.get("protocol"),
@@ -193,21 +191,25 @@ class XRayAPI:
             
             if result and result.get("success"):
                 success_count += 1
-                logger.info(f"3x-ui: ✅ клиент {email} добавлен в inbound {inbound_id}")
+                logger.info(f"3x-ui: ✅ клиент {email} привязан к inbound {inbound_id}")
             else:
-                logger.error(f"3x-ui: ❌ ошибка добавления в inbound {inbound_id}")
+                logger.error(f"3x-ui: ❌ ошибка привязки к inbound {inbound_id}")
         
         if success_count > 0:
-            # ✅ ПРИНУДИТЕЛЬНО ОБНОВЛЯЕМ СРОК ЧЕРЕЗ updateClient
+            # 4. Ждём 2 секунды, чтобы 3x-ui обработал изменения
+            await asyncio.sleep(2)
+            
+            # 5. Обновляем срок через updateClient для всех inbound'ов
             await self.update_client_expiry(email, expiry_days)
-            logger.info(f"3x-ui: срок {expiry_days} дней принудительно установлен для {email}")
+            logger.info(f"3x-ui: срок {expiry_days} дней установлен для {email}")
+            
             return {
                 "uuid": new_uuid,
                 "email": email,
                 "auth": auth,
             }
         
-        logger.error(f"3x-ui: не удалось добавить клиента ни в один inbound")
+        logger.error(f"3x-ui: не удалось привязать клиента ни к одному inbound'у")
         return None
 
     async def update_client_expiry(self, email: str, expiry_days: int) -> bool:
@@ -227,7 +229,6 @@ class XRayAPI:
             "expiryTime": expiry_time,
             "limitIp": 3,
             "totalGB": 0,
-            # ✅ flow убран
         }
         
         # Обновляем во всех inbound'ах, где есть клиент
