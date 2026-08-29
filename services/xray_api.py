@@ -208,7 +208,12 @@ class XRayAPI:
                 template = config.SUB_LINKS[0]
                 base = "/".join(template.split("/")[:-1])
                 return f"{base}/{email}"
-            return f"https://dashoguz.mooo.com:2096/sub/{email}"
+            
+            # ✅ БЕРЁМ ДОМЕН ИЗ XUI_HOST
+            from urllib.parse import urlparse
+            parsed = urlparse(config.XUI_HOST)
+            domain = parsed.netloc.split(":")[0]  # pandorapixis.bot.nu
+            return f"https://{domain}:2096/sub/{email}"
         except Exception as e:
             logger.error(f"3x-ui: ошибка генерации ссылки - {e}")
             return None
