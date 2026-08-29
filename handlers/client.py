@@ -50,7 +50,7 @@ async def get_client_active_subscriptions(client_id: int) -> list:
                 "expires_at": sub.expires_at.strftime('%d.%m.%Y'),
                 "plan": sub.plan,
                 "is_trial": sub.is_trial,
-                "sub_link": sub.sub_link,
+                # ✅ УБРАЛИ sub_link — больше не храним
             }
             for sub in subs
         ]
@@ -82,9 +82,12 @@ async def show_user_profile_by_id(message: types.Message, user_id: int):
         if subscriptions:
             for sub in subscriptions:
                 sub_type = "🆓 триал" if sub["is_trial"] else "✅ оплачено"
+                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ
+                link = await xray.get_client_link(f"client_{client.id}") or "не назначена"
                 text += (
                     f"  • ID {sub['id']} | {sub_type}\n"
                     f"    до {sub['expires_at']} | {sub['plan']}\n"
+                    f"    ссылка: {link}\n"
                 )
         else:
             text += "  ❌ нет активных подписок"
@@ -400,35 +403,32 @@ async def trial_start(callback: types.CallbackQuery):
                 await session.commit()
                 logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
             
+            # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ (НЕ СОХРАНЯЕМ В БД)
             link = await xray.get_client_link(f"client_{client.id}")
             if link:
-                sub.sub_link = link
-                await session.commit()
                 logger.info(f"✅ Триальная ссылка получена через API: {link}")
             else:
-                sub_link = await get_free_sub_link(session)
-                sub.sub_link = sub_link
-                await session.commit()
-                logger.warning("⚠️ Триальная ссылка через API не получена, использована SUB_LINKS")
+                logger.warning("⚠️ Триальная ссылка через API не получена")
         else:
-            # Если не удалось создать клиента — используем SUB_LINKS
+            # Если не удалось создать клиента — используем SUB_LINKS (как резерв)
             sub_link = await get_free_sub_link(session)
-            sub.sub_link = sub_link
+            link = sub_link
             await session.commit()
             logger.error("❌ Не удалось создать клиента в 3x-ui для триала, использована SUB_LINKS")
 
         event = EventLog(
             client_id=client.id,
             event_type="trial_activated",
-            description=f"Триал на {config.TRIAL_DAYS} дн., ссылка {sub.sub_link}"
+            description=f"Триал на {config.TRIAL_DAYS} дн., ссылка {link}"
         )
         session.add(event)
         await session.commit()
 
+    # ✅ ПОКАЗЫВАЕМ ССЫЛКУ (НЕ ИЗ БД, А СГЕНЕРИРОВАННУЮ)
     await callback.message.answer(
         f"<b>🎉 Триал-доступ активирован на {config.TRIAL_DAYS} дня!</b>\n\n"
         f"<b>Ваша ссылка:</b>\n"
-        f"<code>{sub.sub_link or 'не назначена'}</code>\n\n"
+        f"<code>{link or 'не назначена'}</code>\n\n"
         "<b>Как подключиться:</b>\n"
         "1. Скачайте приложение Happ (кнопка «🆘 Помощь / FAQ»)\n"
         "2. В приложении добавьте подписку:\n"
@@ -499,7 +499,9 @@ async def show_status(message: types.Message):
 
     days_left = (sub.expires_at - date.today()).days
     trial_text = " (триал)" if sub.is_trial else ""
-    link = sub.sub_link or "не указана"
+    
+    # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ
+    link = await xray.get_client_link(f"client_{client.id}") or "не указана"
 
     await message.answer(
         "<b>📊 Статус подписки</b>\n\n"

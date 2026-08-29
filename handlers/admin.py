@@ -69,7 +69,7 @@ async def get_client_active_subscriptions(client_id: int) -> List[Dict[str, Any]
                 "expires_at": sub.expires_at.strftime('%d.%m.%Y'),
                 "plan": sub.plan,
                 "is_trial": sub.is_trial,
-                "sub_link": sub.sub_link,
+                # ✅ УБРАЛИ sub_link
             }
             for sub in subs
         ]
@@ -476,9 +476,13 @@ async def list_clients(callback: types.CallbackQuery):
             sub_text = "нет подписки"
             emoji = "❌"
         
+        # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ
+        link = await xray.get_client_link(f"client_{c.id}") or "нет ссылки"
+        
         text += (
             f"{emoji} <a href=\"https://t.me/{config.BOT_USERNAME}?start=user_{c.id}\">ID {c.id}</a> | @{c.username or 'нет'}\n"
-            f"   {c.first_name} | {sub_text}\n\n"
+            f"   {c.first_name} | {sub_text}\n"
+            f"   ссылка: {link}\n\n"
         )
     
     text += f"<i>Всего: {len(clients)} клиентов</i>\n"
@@ -539,9 +543,12 @@ async def show_user_profile(message: types.Message, user_id: int):
         if subscriptions:
             for sub in subscriptions:
                 sub_type = "🆓 триал" if sub["is_trial"] else "✅ оплачено"
+                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ
+                link = await xray.get_client_link(f"client_{client.id}") or "не назначена"
                 text += (
                     f"  • ID {sub['id']} | {sub_type}\n"
                     f"    до {sub['expires_at']} | {sub['plan']}\n"
+                    f"    ссылка: {link}\n"
                 )
         else:
             text += "  ❌ нет активных подписок"
@@ -594,9 +601,12 @@ async def show_user_profile_callback(callback: types.CallbackQuery):
         if subscriptions:
             for sub in subscriptions:
                 sub_type = "🆓 триал" if sub["is_trial"] else "✅ оплачено"
+                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ
+                link = await xray.get_client_link(f"client_{client_id}") or "не назначена"
                 text += (
                     f"  • ID {sub['id']} | {sub_type}\n"
                     f"    до {sub['expires_at']} | {sub['plan']}\n"
+                    f"    ссылка: {link}\n"
                 )
         else:
             text += "  ❌ нет активных подписок"
@@ -804,7 +814,6 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             return
 
         existing_sub = await get_active_subscription(client.id, session)
-        link_updated = False
         
         if existing_sub:
             existing_sub.expires_at = existing_sub.expires_at + timedelta(days=days)
@@ -833,18 +842,10 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
                     await session.commit()
                     logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
                 
+                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ, НЕ СОХРАНЯЕМ В БД
                 new_link = await xray.get_client_link(f"client_{client.id}")
                 if new_link:
-                    sub.sub_link = new_link
-                    await session.commit()
                     logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
-                    link_updated = True
-            else:
-                sub_link = await get_free_sub_link(session)
-                sub.sub_link = sub_link
-                await session.commit()
-                link_updated = True
-                logger.error("❌ Не удалось создать клиента в 3x-ui")
         else:
             await session.execute(
                 text("UPDATE subscriptions SET status = 'expired' WHERE client_id = :uid AND status = 'active'"),
@@ -876,24 +877,10 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
                     await session.commit()
                     logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
                 
+                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ, НЕ СОХРАНЯЕМ В БД
                 new_link = await xray.get_client_link(f"client_{client.id}")
                 if new_link:
-                    sub.sub_link = new_link
-                    await session.commit()
                     logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
-                    link_updated = True
-            else:
-                sub_link = await get_free_sub_link(session)
-                sub.sub_link = sub_link
-                await session.commit()
-                link_updated = True
-                logger.error("❌ Не удалось создать клиента в 3x-ui")
-
-        # ✅ Если ссылка пустая — берём из пула
-        if not sub.sub_link:
-            sub_link = await get_free_sub_link(session)
-            sub.sub_link = sub_link
-            await session.commit()
 
         event = EventLog(
             client_id=client.id,
@@ -1583,7 +1570,6 @@ async def payment_confirm_final(callback: types.CallbackQuery):
         tariff = config.TARIFFS.get(tariff_key, config.TARIFFS["1month"])
 
         existing_sub = await get_active_subscription(client.id, session)
-        link_updated = False
 
         if existing_sub:
             # ПРОДЛЕВАЕМ существующую подписку
@@ -1613,18 +1599,10 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                     await session.commit()
                     logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
                 
+                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ, НЕ СОХРАНЯЕМ В БД
                 new_link = await xray.get_client_link(f"client_{client.id}")
                 if new_link:
-                    sub.sub_link = new_link
-                    await session.commit()
                     logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
-                    link_updated = True
-            else:
-                sub_link = await get_free_sub_link(session)
-                sub.sub_link = sub_link
-                await session.commit()
-                link_updated = True
-                logger.error("❌ Не удалось создать клиента в 3x-ui")
         else:
             # СОЗДАЁМ НОВУЮ ПОДПИСКУ
             await session.execute(
@@ -1657,24 +1635,10 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                     await session.commit()
                     logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
                 
+                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ, НЕ СОХРАНЯЕМ В БД
                 new_link = await xray.get_client_link(f"client_{client.id}")
                 if new_link:
-                    sub.sub_link = new_link
-                    await session.commit()
                     logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
-                    link_updated = True
-            else:
-                sub_link = await get_free_sub_link(session)
-                sub.sub_link = sub_link
-                await session.commit()
-                link_updated = True
-                logger.error("❌ Не удалось создать клиента в 3x-ui")
-
-        # ✅ Если ссылка пустая — берём из пула
-        if not sub.sub_link:
-            sub_link = await get_free_sub_link(session)
-            sub.sub_link = sub_link
-            await session.commit()
 
         # ========================================
         # РЕФЕРАЛЬНАЯ ПРОГРАММА (ТОЛЬКО ПРИ ПЕРВОЙ ОПЛАТЕ)
@@ -1723,26 +1687,17 @@ async def payment_confirm_final(callback: types.CallbackQuery):
     # ОТПРАВКА СООБЩЕНИЯ КЛИЕНТУ
     # ========================================
     try:
+        # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ
+        link = await xray.get_client_link(f"client_{client.id}") or "не назначена"
+        
         message_text = (
             f"<b>✅ Оплата подтверждена!</b>\n\n"
             f"<b>Тариф:</b> {tariff['name']}\n"
             f"<b>Подписка до:</b> {sub.expires_at.strftime('%d.%m.%Y')}\n\n"
+            f"<b>Ваша ссылка:</b>\n"
+            f"<code>{link}</code>\n\n"
+            f"<b>Поддержка:</b> @{config.SUPPORT_BOT_USERNAME}"
         )
-        
-        # ✅ Если ссылка обновлена — показываем новую
-        if link_updated:
-            message_text += (
-                f"<b>⚠️ Внимание! Ссылка обновлена.</b>\n"
-                f"<b>Ваша новая ссылка:</b>\n"
-                f"<code>{sub.sub_link or 'не назначена'}</code>\n\n"
-            )
-        else:
-            message_text += (
-                f"<b>Ваша ссылка:</b>\n"
-                f"<code>{sub.sub_link or 'не назначена'}</code>\n\n"
-            )
-        
-        message_text += f"<b>Поддержка:</b> @{config.SUPPORT_BOT_USERNAME}"
         
         await callback.bot.send_message(
             client.telegram_id,
