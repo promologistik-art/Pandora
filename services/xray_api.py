@@ -107,7 +107,7 @@ class XRayAPI:
         return None
 
     async def add_client(self, email: str, expiry_days: int = 30) -> dict | None:
-        """Создаёт клиента во всех активных inbound'ах БЕЗ flow."""
+        """Создаёт клиента во всех активных inbound'ах и принудительно устанавливает срок."""
         logger.info(f"3x-ui: создание клиента {email}, срок {expiry_days} дней")
         
         # 1. Получаем все активные inbound'ы
@@ -135,7 +135,6 @@ class XRayAPI:
             if isinstance(settings, str):
                 settings = json.loads(settings)
             
-            # ✅ Убеждаемся, что clients существует
             if "clients" not in settings:
                 settings["clients"] = []
             
@@ -199,7 +198,9 @@ class XRayAPI:
                 logger.error(f"3x-ui: ❌ ошибка добавления в inbound {inbound_id}")
         
         if success_count > 0:
-            logger.info(f"3x-ui: клиент {email} добавлен в {success_count} inbound'ов")
+            # ✅ ПРИНУДИТЕЛЬНО ОБНОВЛЯЕМ СРОК ЧЕРЕЗ updateClient
+            await self.update_client_expiry(email, expiry_days)
+            logger.info(f"3x-ui: срок {expiry_days} дней принудительно установлен для {email}")
             return {
                 "uuid": new_uuid,
                 "email": email,
