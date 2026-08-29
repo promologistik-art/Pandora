@@ -1,8 +1,8 @@
 import httpx
 import logging
 import re
-import uuid
 import json
+import asyncio
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from config import config
@@ -47,7 +47,7 @@ class XRayAPI:
             logger.error(f"3x-ui: ошибка GET {path} - {e}")
             return None
 
-    async def _api_post(self, path: str, json_data: dict = None, form_data: dict = None) -> dict | None:
+    async def _api_post(self, path: str, json_data: dict = None) -> dict | None:
         if not self.api_token:
             logger.error("3x-ui: API-токен не настроен!")
             return None
@@ -56,21 +56,14 @@ class XRayAPI:
         headers = {
             "Authorization": f"Bearer {self.api_token}",
             "Accept": "application/json",
+            "Content-Type": "application/json"
         }
         
         try:
             url = f"{self.base_url}{path}"
             logger.info(f"3x-ui POST: {url}")
-            
-            if form_data:
-                headers["Content-Type"] = "application/x-www-form-urlencoded"
-                logger.info(f"3x-ui Form data: {form_data}")
-                resp = await session.post(url, data=form_data, headers=headers)
-            else:
-                headers["Content-Type"] = "application/json"
-                logger.info(f"3x-ui Payload: {json.dumps(json_data or {}, indent=2)[:500]}")
-                resp = await session.post(url, json=json_data or {}, headers=headers)
-            
+            logger.info(f"3x-ui Payload: {json.dumps(json_data or {}, indent=2)[:1000]}")
+            resp = await session.post(url, json=json_data or {}, headers=headers)
             logger.info(f"3x-ui Response: {resp.status_code}")
             logger.info(f"3x-ui Response body: {resp.text[:500]}")
 
@@ -99,9 +92,15 @@ class XRayAPI:
         return data.get("obj", [])
 
     async def _get_active_inbounds(self) -> list:
-        """Получить список активных inbound'ов."""
+        """
+        Получить список активных inbound'ов.
+        Исключаем inbound'ы 8 и 9 (они выключены).
+        """
         inbounds = await self._get_inbounds()
-        return [inb for inb in inbounds if inb.get("enable", False)]
+        # Фильтруем: только включённые (enable=True)
+        active = [inb for inb in inbounds if inb.get("enable", False)]
+        logger.info(f"3x-ui: активные inbound'ы: {[inb.get('id') for inb in active]}")
+        return active
 
     async def _get_client_by_email(self, email: str) -> dict | None:
         """Получить клиента по email через /clients/get/{email}."""
@@ -110,16 +109,43 @@ class XRayAPI:
             return result.get("obj")
         return None
 
-    async def _get_client_uuid_by_email(self, email: str) -> str | None:
-        """Получить UUID клиента по email."""
-        client = await self._get_client_by_email(email)
-        if client:
-            return client.get("id")
+    async def _get_client_uuid_by_email(self, email: str, retries: int = 5) -> str | None:
+        """
+        Получить UUID (id) клиента по email с повторными попытками.
+        Панель генерирует UUID после создания, поэтому нужны повторные попытки.
+        """
+        for attempt in range(retries):
+            if attempt > 0:
+                wait_time = 1 * attempt
+                logger.info(f"3x-ui: ждём {wait_time} сек перед повторной попыткой получения UUID для {email}")
+                await asyncio.sleep(wait_time)
+            
+            client = await self._get_client_by_email(email)
+            if client:
+                client_uuid = client.get("id")
+                if client_uuid:
+                    logger.info(f"3x-ui: ✅ получен UUID {client_uuid} для {email}")
+                    return client_uuid
+            
+            logger.warning(f"3x-ui: попытка {attempt + 1}/{retries} - UUID для {email} не получен")
+        
         return None
 
     async def add_client(self, email: str, expiry_days: int = 30) -> dict | None:
         """
         Создаёт клиента через /clients/add с указанием inboundIds.
+        Использует ТОЧНО ТАКОЙ ЖЕ формат, как панель при создании через интерфейс.
+        
+        Поля, которые генерирует панель (НЕ ПЕРЕДАЁМ):
+        - id (UUID)
+        - password
+        - auth (Hysteria Auth)
+        
+        Поля, которые ОБЯЗАТЕЛЬНО передаём:
+        - email (ID подписки)
+        - subId = email (тоже ID подписки)
+        - inboundIds (массив активных inbound'ов)
+        - expiryTime (расчётное значение)
         """
         logger.info(f"3x-ui: создание клиента {email}, срок {expiry_days} дней")
         
@@ -132,65 +158,66 @@ class XRayAPI:
         inbound_ids = [inb.get("id") for inb in active_inbounds]
         logger.info(f"3x-ui: привязываем клиента к inbound'ам: {inbound_ids}")
         
-        # 2. Создаём клиента через /clients/add
+        # 2. Вычисляем expiryTime (в миллисекундах)
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
+        logger.info(f"3x-ui: expiryTime = {expiry_time} ({expiry_days} дней)")
         
-        # ✅ Формат с вложенным объектом client
+        # 3. Формируем payload ТОЧНО как в панели
+        client_payload = {
+            "email": email,
+            "subId": email,                    # ✅ subId = email (ID подписки)
+            "enable": True,
+            "expiryTime": expiry_time,
+            "limitIp": 3,
+            "totalGB": 0,
+            "comment": "",
+            "group": "",
+            "limitHwid": 0,
+            "reset": 0,
+            "resetDay": 0,
+            "resetMax": 0,
+            "security": "auto",
+            "tgId": 0,
+            "flow": "",
+            "trafficReset": "never",
+            "trafficResetDay": 1,
+            # ❌ НЕ передаём: id, password, auth (генерируются панелью)
+        }
+        
         payload = {
-            "client": {
-                "email": email,
-                "enable": True,
-                "expiryTime": expiry_time,
-                "limitIp": 3,
-                "totalGB": 0,
-            },
+            "client": client_payload,
             "inboundIds": inbound_ids,
         }
         
         result = await self._api_post("/panel/api/clients/add", payload)
         
-        # Если первый вариант не сработал, пробуем второй
-        if not result or not result.get("success"):
-            logger.warning("3x-ui: первый формат не сработал, пробуем второй...")
-            
-            # Второй вариант - плоский payload
-            payload2 = {
-                "email": email,
-                "enable": True,
-                "expiryTime": expiry_time,
-                "limitIp": 3,
-                "totalGB": 0,
-                "inboundIds": inbound_ids,
-            }
-            result = await self._api_post("/panel/api/clients/add", payload2)
-        
         if result and result.get("success"):
-            # ✅ ИСПРАВЛЕНО: обрабатываем случай, когда obj = null
-            client_data = result.get("obj")
+            logger.info(f"3x-ui: ✅ клиент {email} создан, ожидаем генерацию UUID...")
             
-            # Пытаемся получить UUID через отдельный запрос
-            client_uuid = None
-            if client_data:
-                client_uuid = client_data.get("id")
+            # Ждём, пока панель сгенерирует UUID
+            real_uuid = await self._get_client_uuid_by_email(email, retries=5)
             
-            # Если UUID не получен из ответа, запрашиваем клиента по email
-            if not client_uuid:
-                logger.info(f"3x-ui: получаем UUID клиента {email} через /clients/get")
-                client_uuid = await self._get_client_uuid_by_email(email)
-            
-            if client_uuid:
-                logger.info(f"3x-ui: ✅ клиент {email} создан, UUID: {client_uuid}")
+            if real_uuid:
+                logger.info(f"3x-ui: ✅ клиент {email} создан с UUID {real_uuid}")
                 return {
-                    "uuid": client_uuid,
+                    "uuid": real_uuid,
                     "email": email,
                 }
             else:
-                # Даже если UUID не получен, клиент создан - возвращаем успех
-                logger.warning(f"3x-ui: клиент {email} создан, но UUID не получен")
-                return {
-                    "uuid": None,
-                    "email": email,
-                }
+                # Если UUID не получен - пробуем получить данные клиента
+                client_data = await self._get_client_by_email(email)
+                if client_data:
+                    logger.info(f"3x-ui: ✅ клиент {email} создан, данные получены")
+                    return {
+                        "uuid": client_data.get("id"),
+                        "email": email,
+                    }
+                else:
+                    logger.warning(f"3x-ui: клиент {email} создан, но данные не получены")
+                    return {
+                        "uuid": None,
+                        "email": email,
+                    }
         
         logger.error(f"3x-ui: ❌ ошибка создания клиента: {result}")
         return None
@@ -209,30 +236,29 @@ class XRayAPI:
         
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
         
-        # 2. Обновляем клиента
+        # 2. Обновляем клиента (сохраняя все остальные поля)
         payload = {
             "email": email,
+            "subId": client.get("subId", email),
             "enable": client.get("enable", True),
             "expiryTime": expiry_time,
             "limitIp": client.get("limitIp", 3),
             "totalGB": client.get("totalGB", 0),
+            "comment": client.get("comment", ""),
+            "group": client.get("group", ""),
+            "limitHwid": client.get("limitHwid", 0),
+            "reset": client.get("reset", 0),
+            "resetDay": client.get("resetDay", 0),
+            "resetMax": client.get("resetMax", 0),
+            "security": client.get("security", "auto"),
+            "tgId": client.get("tgId", 0),
+            "flow": client.get("flow", ""),
+            "trafficReset": client.get("trafficReset", "never"),
+            "trafficResetDay": client.get("trafficResetDay", 1),
             "inboundIds": client.get("inboundIds", []),
         }
         
         result = await self._api_post(f"/panel/api/clients/update/{email}", payload)
-        
-        # Если JSON не сработал, пробуем form-data
-        if not result or not result.get("success"):
-            logger.warning("3x-ui: JSON формат не сработал, пробуем form-data...")
-            form_data = {
-                "email": email,
-                "enable": str(client.get("enable", True)).lower(),
-                "expiryTime": str(expiry_time),
-                "limitIp": str(client.get("limitIp", 3)),
-                "totalGB": str(client.get("totalGB", 0)),
-                "inboundIds": ",".join(str(i) for i in client.get("inboundIds", [])),
-            }
-            result = await self._api_post(f"/panel/api/clients/update/{email}", form_data=form_data)
         
         if result and result.get("success"):
             logger.info(f"3x-ui: ✅ срок для {email} обновлён до {expiry_days} дней")
@@ -291,7 +317,6 @@ class XRayAPI:
         # Удаляем по email
         email = client_id
         
-        # Пробуем через /clients/del
         result = await self._api_post(f"/panel/api/clients/del/{email}")
         if result and result.get("success"):
             logger.info(f"3x-ui: ✅ клиент {email} удалён")
