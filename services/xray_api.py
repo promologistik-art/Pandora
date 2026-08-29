@@ -63,12 +63,10 @@ class XRayAPI:
             logger.info(f"3x-ui POST: {url}")
             
             if form_data:
-                # Для form-data запросов
                 headers["Content-Type"] = "application/x-www-form-urlencoded"
                 logger.info(f"3x-ui Form data: {form_data}")
                 resp = await session.post(url, data=form_data, headers=headers)
             else:
-                # Для JSON запросов
                 headers["Content-Type"] = "application/json"
                 logger.info(f"3x-ui Payload: {json.dumps(json_data or {}, indent=2)[:500]}")
                 resp = await session.post(url, json=json_data or {}, headers=headers)
@@ -137,7 +135,7 @@ class XRayAPI:
         # 2. Создаём клиента через /clients/add
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
         
-        # ✅ Пробуем другой формат - с вложенным объектом client
+        # ✅ Формат с вложенным объектом client
         payload = {
             "client": {
                 "email": email,
@@ -167,42 +165,32 @@ class XRayAPI:
             result = await self._api_post("/panel/api/clients/add", payload2)
         
         if result and result.get("success"):
-            client_data = result.get("obj", {})
-            client_uuid = client_data.get("id")
+            # ✅ ИСПРАВЛЕНО: обрабатываем случай, когда obj = null
+            client_data = result.get("obj")
             
+            # Пытаемся получить UUID через отдельный запрос
+            client_uuid = None
+            if client_data:
+                client_uuid = client_data.get("id")
+            
+            # Если UUID не получен из ответа, запрашиваем клиента по email
             if not client_uuid:
+                logger.info(f"3x-ui: получаем UUID клиента {email} через /clients/get")
                 client_uuid = await self._get_client_uuid_by_email(email)
             
-            logger.info(f"3x-ui: ✅ клиент {email} создан и привязан к {len(inbound_ids)} inbound'ам")
-            return {
-                "uuid": client_uuid,
-                "email": email,
-            }
-        
-        # Если оба варианта не сработали, пробуем через form-data
-        logger.warning("3x-ui: JSON формат не сработал, пробуем form-data...")
-        form_data = {
-            "email": email,
-            "enable": "true",
-            "expiryTime": str(expiry_time),
-            "limitIp": "3",
-            "totalGB": "0",
-            "inboundIds": ",".join(str(i) for i in inbound_ids),
-        }
-        result = await self._api_post("/panel/api/clients/add", form_data=form_data)
-        
-        if result and result.get("success"):
-            client_data = result.get("obj", {})
-            client_uuid = client_data.get("id")
-            
-            if not client_uuid:
-                client_uuid = await self._get_client_uuid_by_email(email)
-            
-            logger.info(f"3x-ui: ✅ клиент {email} создан через form-data и привязан к {len(inbound_ids)} inbound'ам")
-            return {
-                "uuid": client_uuid,
-                "email": email,
-            }
+            if client_uuid:
+                logger.info(f"3x-ui: ✅ клиент {email} создан, UUID: {client_uuid}")
+                return {
+                    "uuid": client_uuid,
+                    "email": email,
+                }
+            else:
+                # Даже если UUID не получен, клиент создан - возвращаем успех
+                logger.warning(f"3x-ui: клиент {email} создан, но UUID не получен")
+                return {
+                    "uuid": None,
+                    "email": email,
+                }
         
         logger.error(f"3x-ui: ❌ ошибка создания клиента: {result}")
         return None
