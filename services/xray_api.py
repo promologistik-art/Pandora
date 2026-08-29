@@ -1,10 +1,8 @@
 import httpx
 import logging
-import secrets
-import json
-import uuid
-import asyncio
 import re
+import uuid
+import json
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from config import config
@@ -49,7 +47,7 @@ class XRayAPI:
             logger.error(f"3x-ui: ошибка GET {path} - {e}")
             return None
 
-    async def _api_post(self, path: str, json_data: dict = None) -> dict | None:
+    async def _api_post(self, path: str, json_data: dict = None, form_data: dict = None) -> dict | None:
         if not self.api_token:
             logger.error("3x-ui: API-токен не настроен!")
             return None
@@ -58,13 +56,23 @@ class XRayAPI:
         headers = {
             "Authorization": f"Bearer {self.api_token}",
             "Accept": "application/json",
-            "Content-Type": "application/json"
         }
+        
         try:
             url = f"{self.base_url}{path}"
             logger.info(f"3x-ui POST: {url}")
-            logger.info(f"3x-ui Payload: {json.dumps(json_data or {}, indent=2)}")
-            resp = await session.post(url, json=json_data or {}, headers=headers)
+            
+            if form_data:
+                # Для form-data запросов
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+                logger.info(f"3x-ui Form data: {form_data}")
+                resp = await session.post(url, data=form_data, headers=headers)
+            else:
+                # Для JSON запросов
+                headers["Content-Type"] = "application/json"
+                logger.info(f"3x-ui Payload: {json.dumps(json_data or {}, indent=2)[:500]}")
+                resp = await session.post(url, json=json_data or {}, headers=headers)
+            
             logger.info(f"3x-ui Response: {resp.status_code}")
             logger.info(f"3x-ui Response body: {resp.text[:500]}")
 
@@ -113,7 +121,7 @@ class XRayAPI:
 
     async def add_client(self, email: str, expiry_days: int = 30) -> dict | None:
         """
-        Создаёт клиента и привязывает ко всем активным inbound'ам через /clients/add.
+        Создаёт клиента через /clients/add с указанием inboundIds.
         """
         logger.info(f"3x-ui: создание клиента {email}, срок {expiry_days} дней")
         
@@ -129,17 +137,34 @@ class XRayAPI:
         # 2. Создаём клиента через /clients/add
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
         
-        # ✅ ИСПРАВЛЕНО: Добавлено обязательное поле email
+        # ✅ Пробуем другой формат - с вложенным объектом client
         payload = {
-            "email": email,                              # ✅ ОБЯЗАТЕЛЬНОЕ поле
-            "enable": True,
-            "expiryTime": expiry_time,
-            "limitIp": 3,
-            "totalGB": 0,
+            "client": {
+                "email": email,
+                "enable": True,
+                "expiryTime": expiry_time,
+                "limitIp": 3,
+                "totalGB": 0,
+            },
             "inboundIds": inbound_ids,
         }
         
         result = await self._api_post("/panel/api/clients/add", payload)
+        
+        # Если первый вариант не сработал, пробуем второй
+        if not result or not result.get("success"):
+            logger.warning("3x-ui: первый формат не сработал, пробуем второй...")
+            
+            # Второй вариант - плоский payload
+            payload2 = {
+                "email": email,
+                "enable": True,
+                "expiryTime": expiry_time,
+                "limitIp": 3,
+                "totalGB": 0,
+                "inboundIds": inbound_ids,
+            }
+            result = await self._api_post("/panel/api/clients/add", payload2)
         
         if result and result.get("success"):
             client_data = result.get("obj", {})
@@ -149,6 +174,31 @@ class XRayAPI:
                 client_uuid = await self._get_client_uuid_by_email(email)
             
             logger.info(f"3x-ui: ✅ клиент {email} создан и привязан к {len(inbound_ids)} inbound'ам")
+            return {
+                "uuid": client_uuid,
+                "email": email,
+            }
+        
+        # Если оба варианта не сработали, пробуем через form-data
+        logger.warning("3x-ui: JSON формат не сработал, пробуем form-data...")
+        form_data = {
+            "email": email,
+            "enable": "true",
+            "expiryTime": str(expiry_time),
+            "limitIp": "3",
+            "totalGB": "0",
+            "inboundIds": ",".join(str(i) for i in inbound_ids),
+        }
+        result = await self._api_post("/panel/api/clients/add", form_data=form_data)
+        
+        if result and result.get("success"):
+            client_data = result.get("obj", {})
+            client_uuid = client_data.get("id")
+            
+            if not client_uuid:
+                client_uuid = await self._get_client_uuid_by_email(email)
+            
+            logger.info(f"3x-ui: ✅ клиент {email} создан через form-data и привязан к {len(inbound_ids)} inbound'ам")
             return {
                 "uuid": client_uuid,
                 "email": email,
@@ -171,7 +221,7 @@ class XRayAPI:
         
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
         
-        # 2. Обновляем только срок
+        # 2. Обновляем клиента
         payload = {
             "email": email,
             "enable": client.get("enable", True),
@@ -183,6 +233,19 @@ class XRayAPI:
         
         result = await self._api_post(f"/panel/api/clients/update/{email}", payload)
         
+        # Если JSON не сработал, пробуем form-data
+        if not result or not result.get("success"):
+            logger.warning("3x-ui: JSON формат не сработал, пробуем form-data...")
+            form_data = {
+                "email": email,
+                "enable": str(client.get("enable", True)).lower(),
+                "expiryTime": str(expiry_time),
+                "limitIp": str(client.get("limitIp", 3)),
+                "totalGB": str(client.get("totalGB", 0)),
+                "inboundIds": ",".join(str(i) for i in client.get("inboundIds", [])),
+            }
+            result = await self._api_post(f"/panel/api/clients/update/{email}", form_data=form_data)
+        
         if result and result.get("success"):
             logger.info(f"3x-ui: ✅ срок для {email} обновлён до {expiry_days} дней")
             return True
@@ -193,19 +256,15 @@ class XRayAPI:
     async def get_client_link(self, email: str) -> str | None:
         """
         Генерирует ссылку для подключения клиента.
-        Использует SUB_LINKS из конфига как шаблон.
         """
         try:
             if config.SUB_LINKS and len(config.SUB_LINKS) > 0:
                 template = config.SUB_LINKS[0]
-                # Если в шаблоне есть {email}, заменяем
                 if "{email}" in template:
                     return template.format(email=email)
-                # Иначе используем как базовый URL
                 base = "/".join(template.split("/")[:-1])
                 return f"{base}/{email}"
             
-            # Если SUB_LINKS нет, используем домен из XUI_HOST
             parsed = urlparse(config.XUI_HOST)
             domain = parsed.netloc.split(":")[0]
             return f"https://{domain}:2096/sub/{email}"
@@ -215,8 +274,7 @@ class XRayAPI:
 
     async def remove_client(self, client_id: str) -> bool:
         """
-        Удаляет клиента по email или UUID.
-        Поддерживает оба формата для обратной совместимости.
+        Удаляет клиента по email.
         """
         logger.info(f"3x-ui: удаление клиента {client_id}")
         
@@ -228,51 +286,36 @@ class XRayAPI:
         ))
         
         if is_uuid:
-            # Если это UUID, пробуем найти клиента по email через поиск
-            # Вариант 1: пробуем удалить по UUID через API (если поддерживается)
-            result = await self._api_post(f"/panel/api/clients/del/{client_id}")
-            if result and result.get("success"):
-                logger.info(f"3x-ui: ✅ клиент {client_id} удалён по UUID")
-                return True
-            
-            # Вариант 2: пробуем найти email по UUID через список клиентов
-            logger.warning(f"3x-ui: не удалось удалить по UUID {client_id}, пробуем найти email")
+            # Если это UUID, пробуем найти email
             inbounds = await self._get_active_inbounds()
             for inbound in inbounds:
-                for client in inbound.get("settings", {}).get("clients", []):
+                settings = inbound.get("settings", {})
+                if isinstance(settings, str):
+                    settings = json.loads(settings)
+                for client in settings.get("clients", []):
                     if client.get("id") == client_id:
                         email = client.get("email")
                         if email:
-                            logger.info(f"3x-ui: найден email {email} для UUID {client_id}")
                             return await self.remove_client(email)
-            
             logger.error(f"3x-ui: ❌ клиент с UUID {client_id} не найден")
             return False
-        else:
-            # Это email - удаляем напрямую
-            result = await self._api_post(f"/panel/api/clients/del/{client_id}")
-            if result and result.get("success"):
-                logger.info(f"3x-ui: ✅ клиент {client_id} удалён")
-                return True
-            
-            logger.error(f"3x-ui: ❌ ошибка удаления клиента: {result}")
-            return False
+        
+        # Удаляем по email
+        email = client_id
+        
+        # Пробуем через /clients/del
+        result = await self._api_post(f"/panel/api/clients/del/{email}")
+        if result and result.get("success"):
+            logger.info(f"3x-ui: ✅ клиент {email} удалён")
+            return True
+        
+        logger.error(f"3x-ui: ❌ ошибка удаления клиента: {result}")
+        return False
 
     async def client_exists(self, email: str) -> bool:
         """Проверяет, существует ли клиент с указанным email."""
         client = await self._get_client_by_email(email)
         return client is not None
-
-    async def get_client_traffic(self, email: str) -> dict | None:
-        """Получает трафик клиента по email."""
-        client = await self._get_client_by_email(email)
-        if client:
-            return {
-                "up": client.get("up", 0),
-                "down": client.get("down", 0),
-                "total": client.get("total", 0),
-            }
-        return None
 
     async def close(self):
         if self._session:
