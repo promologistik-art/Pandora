@@ -93,22 +93,25 @@ class XRayAPI:
         inbounds = await self._get_inbounds()
         return [inb for inb in inbounds if inb.get("enable", False)]
 
+    async def _get_client_by_email(self, email: str) -> dict | None:
+        """Получить клиента по email через /clients/get/{email}."""
+        result = await self._api_get(f"/panel/api/clients/get/{email}")
+        if result and result.get("success"):
+            return result.get("obj")
+        return None
+
     async def _get_client_uuid_by_email(self, email: str) -> str | None:
-        """Получить UUID клиента по email из settings.clients любого inbound."""
-        inbounds = await self._get_inbounds()
-        for inbound in inbounds:
-            settings = inbound.get("settings", {})
-            if isinstance(settings, str):
-                settings = json.loads(settings)
-            
-            for client in settings.get("clients", []):
-                if client.get("email") == email:
-                    return client.get("id")
-        
+        """Получить UUID клиента по email."""
+        client = await self._get_client_by_email(email)
+        if client:
+            return client.get("id")
         return None
 
     async def add_client(self, email: str, expiry_days: int = 30) -> dict | None:
-        """Создаёт клиента и привязывает ко всем активным inbound'ам."""
+        """
+        Создаёт клиента и привязывает ко всем активным inbound'ам через /clients/add.
+        Не трогает настройки inbound'ов.
+        """
         logger.info(f"3x-ui: создание клиента {email}, срок {expiry_days} дней")
         
         # 1. Получаем все активные inbound'ы
@@ -117,146 +120,75 @@ class XRayAPI:
             logger.error("3x-ui: нет активных inbound'ов")
             return None
         
-        logger.info(f"3x-ui: найдено {len(active_inbounds)} активных inbound'ов")
+        inbound_ids = [inb.get("id") for inb in active_inbounds]
+        logger.info(f"3x-ui: привязываем клиента к inbound'ам: {inbound_ids}")
         
-        # 2. Генерируем UUID один раз для клиента
-        new_uuid = str(uuid.uuid4())
-        auth = secrets.token_hex(8)
+        # 2. Создаём клиента через /clients/add
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
         
-        success_count = 0
-        
-        # 3. Добавляем клиента в КАЖДЫЙ inbound (привязываем inbound'ы к клиенту)
-        for inbound in active_inbounds:
-            inbound_id = inbound.get("id")
-            remark = inbound.get("remark", inbound_id)
-            logger.info(f"3x-ui: привязываем клиента к inbound {inbound_id} ({remark})")
-            
-            settings = inbound.get("settings", {})
-            if isinstance(settings, str):
-                settings = json.loads(settings)
-            
-            if "clients" not in settings:
-                settings["clients"] = []
-            
-            clients = settings.get("clients", [])
-            
-            # Проверяем, есть ли уже клиент в этом inbound'е
-            if any(c.get("email") == email for c in clients):
-                logger.info(f"3x-ui: клиент {email} уже есть в inbound {inbound_id}, пропускаем")
-                continue
-            
-            # Добавляем клиента в этот inbound
-            client_data = {
-                "id": new_uuid,
-                "email": email,
-                "enable": True,
-                "auth": auth,
-                "password": auth,
-                "subId": email,
-                "limitIp": 3,
-                "totalGB": 0,
-                "expiryTime": expiry_time,
-                "tgId": 0,
-                "security": "auto",
-                "reset": 0,
-            }
-            clients.append(client_data)
-            settings["clients"] = clients
-            
-            update_data = {
-                "id": inbound_id,
-                "protocol": inbound.get("protocol"),
-                "port": inbound.get("port"),
-                "listen": inbound.get("listen", ""),
-                "remark": inbound.get("remark", ""),
-                "enable": inbound.get("enable", True),
-                "expiryTime": inbound.get("expiryTime", 0),
-                "total": inbound.get("total", 0),
-                "trafficReset": inbound.get("trafficReset", "never"),
-                "settings": settings,
-                "streamSettings": inbound.get("streamSettings", {}),
-                "sniffing": inbound.get("sniffing", {"enabled": False}),
-                "tag": inbound.get("tag", ""),
-                "shareAddrStrategy": inbound.get("shareAddrStrategy", "listen"),
-                "shareAddr": inbound.get("shareAddr", ""),
-                "subSortIndex": inbound.get("subSortIndex", 1),
-                "originNodeGuid": inbound.get("originNodeGuid", ""),
-            }
-            
-            result = await self._api_post(
-                f"/panel/api/inbounds/update/{inbound_id}",
-                update_data
-            )
-            
-            if result and result.get("success"):
-                success_count += 1
-                logger.info(f"3x-ui: ✅ клиент {email} привязан к inbound {inbound_id}")
-            else:
-                logger.error(f"3x-ui: ❌ ошибка привязки к inbound {inbound_id}")
-        
-        if success_count > 0:
-            # 4. Ждём 2 секунды, чтобы 3x-ui обработал изменения
-            await asyncio.sleep(2)
-            
-            # 5. Обновляем срок через updateClient для всех inbound'ов
-            await self.update_client_expiry(email, expiry_days)
-            logger.info(f"3x-ui: срок {expiry_days} дней установлен для {email}")
-            
-            return {
-                "uuid": new_uuid,
-                "email": email,
-                "auth": auth,
-            }
-        
-        logger.error(f"3x-ui: не удалось привязать клиента ни к одному inbound'у")
-        return None
-
-    async def update_client_expiry(self, email: str, expiry_days: int) -> bool:
-        """Обновляет срок клиента во всех inbound'ах, где он есть."""
-        logger.info(f"3x-ui: обновление срока для {email} до {expiry_days} дней")
-        
-        client_uuid = await self._get_client_uuid_by_email(email)
-        if not client_uuid:
-            logger.error(f"3x-ui: клиент {email} не найден")
-            return False
-        
-        expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
-        update_data = {
-            "id": client_uuid,
+        payload = {
             "email": email,
             "enable": True,
             "expiryTime": expiry_time,
             "limitIp": 3,
             "totalGB": 0,
+            "inboundIds": inbound_ids,
+            "subId": email,
         }
         
-        # Обновляем во всех inbound'ах, где есть клиент
-        inbounds = await self._get_inbounds()
-        success_count = 0
+        result = await self._api_post("/panel/api/clients/add", payload)
         
-        for inbound in inbounds:
-            settings = inbound.get("settings", {})
-            if isinstance(settings, str):
-                settings = json.loads(settings)
+        if result and result.get("success"):
+            client_data = result.get("obj", {})
+            client_uuid = client_data.get("id")
             
-            # Проверяем, есть ли клиент в этом inbound'е
-            if not any(c.get("email") == email for c in settings.get("clients", [])):
-                continue
+            if not client_uuid:
+                client_uuid = await self._get_client_uuid_by_email(email)
             
-            inbound_id = inbound.get("id")
-            result = await self._api_post(
-                f"/panel/api/inbounds/updateClient/{inbound_id}/{client_uuid}",
-                update_data
-            )
-            
-            if result and result.get("success"):
-                success_count += 1
-                logger.info(f"3x-ui: ✅ срок для {email} обновлён в inbound {inbound_id}")
-            else:
-                logger.error(f"3x-ui: ❌ ошибка обновления в inbound {inbound_id}")
+            logger.info(f"3x-ui: ✅ клиент {email} создан и привязан к {len(inbound_ids)} inbound'ам")
+            return {
+                "uuid": client_uuid,
+                "email": email,
+                "auth": None,
+            }
         
-        return success_count > 0
+        logger.error(f"3x-ui: ❌ ошибка создания клиента: {result}")
+        return None
+
+    async def update_client_expiry(self, email: str, expiry_days: int) -> bool:
+        """
+        Обновляет срок клиента через /clients/update/{email}.
+        Изменения применяются ко всем привязанным inbound'ам автоматически.
+        """
+        logger.info(f"3x-ui: обновление срока для {email} до {expiry_days} дней")
+        
+        # 1. Получаем текущего клиента
+        client = await self._get_client_by_email(email)
+        if not client:
+            logger.error(f"3x-ui: клиент {email} не найден")
+            return False
+        
+        expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
+        
+        # 2. Обновляем только срок
+        payload = {
+            "email": email,
+            "enable": client.get("enable", True),
+            "expiryTime": expiry_time,
+            "limitIp": client.get("limitIp", 3),
+            "totalGB": client.get("totalGB", 0),
+            "inboundIds": client.get("inboundIds", []),
+            "subId": client.get("subId", email),
+        }
+        
+        result = await self._api_post(f"/panel/api/clients/update/{email}", payload)
+        
+        if result and result.get("success"):
+            logger.info(f"3x-ui: ✅ срок для {email} обновлён до {expiry_days} дней")
+            return True
+        
+        logger.error(f"3x-ui: ❌ ошибка обновления срока: {result}")
+        return False
 
     async def get_client_link(self, email: str) -> str | None:
         try:
@@ -274,57 +206,20 @@ class XRayAPI:
             logger.error(f"3x-ui: ошибка генерации ссылки - {e}")
             return None
 
-    async def remove_client(self, uuid: str) -> bool:
-        """Удаляет клиента из всех inbound'ов."""
-        inbounds = await self._get_inbounds()
-        success_count = 0
+    async def remove_client(self, email: str) -> bool:
+        """
+        Удаляет клиента через /clients/del/{email}.
+        """
+        logger.info(f"3x-ui: удаление клиента {email}")
         
-        for inbound in inbounds:
-            inbound_id = inbound.get("id")
-            settings = inbound.get("settings", {})
-            if isinstance(settings, str):
-                settings = json.loads(settings)
-            
-            clients = settings.get("clients", [])
-            new_clients = [c for c in clients if c.get("id") != uuid]
-            
-            if len(new_clients) == len(clients):
-                continue
-            
-            settings["clients"] = new_clients
-            
-            update_data = {
-                "id": inbound_id,
-                "protocol": inbound.get("protocol"),
-                "port": inbound.get("port"),
-                "listen": inbound.get("listen", ""),
-                "remark": inbound.get("remark", ""),
-                "enable": inbound.get("enable", True),
-                "expiryTime": inbound.get("expiryTime", 0),
-                "total": inbound.get("total", 0),
-                "trafficReset": inbound.get("trafficReset", "never"),
-                "settings": settings,
-                "streamSettings": inbound.get("streamSettings", {}),
-                "sniffing": inbound.get("sniffing", {"enabled": False}),
-                "tag": inbound.get("tag", ""),
-                "shareAddrStrategy": inbound.get("shareAddrStrategy", "listen"),
-                "shareAddr": inbound.get("shareAddr", ""),
-                "subSortIndex": inbound.get("subSortIndex", 1),
-                "originNodeGuid": inbound.get("originNodeGuid", ""),
-            }
-            
-            result = await self._api_post(
-                f"/panel/api/inbounds/update/{inbound_id}",
-                update_data
-            )
-            
-            if result and result.get("success"):
-                success_count += 1
-                logger.info(f"3x-ui: ✅ клиент удалён из inbound {inbound_id}")
-            else:
-                logger.error(f"3x-ui: ❌ ошибка удаления из inbound {inbound_id}")
+        result = await self._api_post(f"/panel/api/clients/del/{email}")
         
-        return success_count > 0
+        if result and result.get("success"):
+            logger.info(f"3x-ui: ✅ клиент {email} удалён")
+            return True
+        
+        logger.error(f"3x-ui: ❌ ошибка удаления клиента: {result}")
+        return False
 
     async def close(self):
         if self._session:
