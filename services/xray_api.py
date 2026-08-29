@@ -80,22 +80,22 @@ class XRayAPI:
         except:
             return False
 
-    async def _get_inbound(self) -> dict | None:
+    async def _get_inbounds(self) -> list:
+        """Получить список всех inbound'ов."""
         data = await self._api_get("/panel/api/inbounds/list")
         if not data or not data.get("success"):
-            return None
-        for inbound in data.get("obj", []):
-            if inbound.get("id") == config.XUI_INBOUND_ID:
-                return inbound
-        return None
+            return []
+        return data.get("obj", [])
+
+    async def _get_active_inbounds(self) -> list:
+        """Получить список активных inbound'ов."""
+        inbounds = await self._get_inbounds()
+        return [inb for inb in inbounds if inb.get("enable", False)]
 
     async def _get_client_uuid_by_email(self, email: str) -> str | None:
-        """Получить UUID клиента по email из settings.clients."""
-        data = await self._api_get("/panel/api/inbounds/list")
-        if not data or not data.get("success"):
-            return None
-        
-        for inbound in data.get("obj", []):
+        """Получить UUID клиента по email из settings.clients любого inbound."""
+        inbounds = await self._get_inbounds()
+        for inbound in inbounds:
             settings = inbound.get("settings", {})
             if isinstance(settings, str):
                 settings = json.loads(settings)
@@ -107,85 +107,113 @@ class XRayAPI:
         return None
 
     async def add_client(self, email: str, expiry_days: int = 30) -> dict | None:
-        """Создаёт клиента с автоматической генерацией UUID."""
+        """Создаёт клиента во всех активных inbound'ах."""
         logger.info(f"3x-ui: создание клиента {email}, срок {expiry_days} дней")
-        inbound = await self._get_inbound()
-        if not inbound:
-            logger.error("3x-ui: inbound не найден")
+        
+        # 1. Получаем все активные inbound'ы
+        active_inbounds = await self._get_active_inbounds()
+        if not active_inbounds:
+            logger.error("3x-ui: нет активных inbound'ов")
             return None
-
-        settings = inbound.get("settings", {})
-        if isinstance(settings, str):
-            settings = json.loads(settings)
-
-        # ✅ ГЕНЕРИРУЕМ UUID В БОТЕ
+        
+        logger.info(f"3x-ui: найдено {len(active_inbounds)} активных inbound'ов")
+        
+        # 2. Генерируем UUID один раз для всех inbound'ов
         new_uuid = str(uuid.uuid4())
         auth = secrets.token_hex(8)
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
-
-        clients = settings.get("clients", [])
-        client_data = {
-            "id": new_uuid,
-            "email": email,
-            "enable": True,
-            "flow": "xtls-rprx-vision",
-            "auth": auth,
-            "password": auth,
-            "subId": email,
-            "limitIp": 3,
-            "totalGB": 0,
-            "expiryTime": expiry_time,
-            "tgId": 0,
-            "security": "auto",
-            "reset": 0,
-        }
         
-        clients.append(client_data)
-        settings["clients"] = clients
-
-        update_data = {
-            "id": inbound.get("id"),
-            "protocol": inbound.get("protocol"),
-            "port": inbound.get("port"),
-            "listen": inbound.get("listen", ""),
-            "remark": inbound.get("remark", ""),
-            "enable": inbound.get("enable", True),
-            "expiryTime": inbound.get("expiryTime", 0),
-            "total": inbound.get("total", 0),
-            "trafficReset": inbound.get("trafficReset", "never"),
-            "settings": settings,
-            "streamSettings": inbound.get("streamSettings", {}),
-            "sniffing": inbound.get("sniffing", {"enabled": False}),
-            "tag": inbound.get("tag", ""),
-            "shareAddrStrategy": inbound.get("shareAddrStrategy", "listen"),
-            "shareAddr": inbound.get("shareAddr", ""),
-            "subSortIndex": inbound.get("subSortIndex", 1),
-            "originNodeGuid": inbound.get("originNodeGuid", ""),
-        }
-
-        result = await self._api_post(
-            f"/panel/api/inbounds/update/{config.XUI_INBOUND_ID}",
-            update_data
-        )
-
-        if result and result.get("success"):
-            logger.info(f"3x-ui: клиент {email} добавлен с UUID {new_uuid}")
+        success_count = 0
+        
+        for inbound in active_inbounds:
+            inbound_id = inbound.get("id")
+            remark = inbound.get("remark", inbound_id)
+            logger.info(f"3x-ui: добавляем клиента в inbound {inbound_id} ({remark})")
+            
+            # 3. Получаем текущих клиентов inbound'а
+            settings = inbound.get("settings", {})
+            if isinstance(settings, str):
+                settings = json.loads(settings)
+            
+            clients = settings.get("clients", [])
+            
+            # 4. Проверяем, нет ли уже такого клиента
+            exists = any(c.get("email") == email for c in clients)
+            if exists:
+                logger.info(f"3x-ui: клиент {email} уже есть в inbound {inbound_id}, пропускаем")
+                continue
+            
+            # 5. Добавляем клиента
+            client_data = {
+                "id": new_uuid,
+                "email": email,
+                "enable": True,
+                "flow": "xtls-rprx-vision",
+                "auth": auth,
+                "password": auth,
+                "subId": email,
+                "limitIp": 3,
+                "totalGB": 0,
+                "expiryTime": expiry_time,
+                "tgId": 0,
+                "security": "auto",
+                "reset": 0,
+            }
+            clients.append(client_data)
+            settings["clients"] = clients
+            
+            # 6. Обновляем inbound
+            update_data = {
+                "id": inbound_id,
+                "protocol": inbound.get("protocol"),
+                "port": inbound.get("port"),
+                "listen": inbound.get("listen", ""),
+                "remark": inbound.get("remark", ""),
+                "enable": inbound.get("enable", True),
+                "expiryTime": inbound.get("expiryTime", 0),
+                "total": inbound.get("total", 0),
+                "trafficReset": inbound.get("trafficReset", "never"),
+                "settings": settings,
+                "streamSettings": inbound.get("streamSettings", {}),
+                "sniffing": inbound.get("sniffing", {"enabled": False}),
+                "tag": inbound.get("tag", ""),
+                "shareAddrStrategy": inbound.get("shareAddrStrategy", "listen"),
+                "shareAddr": inbound.get("shareAddr", ""),
+                "subSortIndex": inbound.get("subSortIndex", 1),
+                "originNodeGuid": inbound.get("originNodeGuid", ""),
+            }
+            
+            result = await self._api_post(
+                f"/panel/api/inbounds/update/{inbound_id}",
+                update_data
+            )
+            
+            if result and result.get("success"):
+                success_count += 1
+                logger.info(f"3x-ui: ✅ клиент {email} добавлен в inbound {inbound_id}")
+            else:
+                logger.error(f"3x-ui: ❌ ошибка добавления в inbound {inbound_id}")
+        
+        if success_count > 0:
+            logger.info(f"3x-ui: клиент {email} добавлен в {success_count} inbound'ов")
             return {
                 "uuid": new_uuid,
                 "email": email,
                 "auth": auth,
             }
         
-        logger.error(f"3x-ui: ошибка добавления клиента")
+        logger.error(f"3x-ui: не удалось добавить клиента ни в один inbound")
         return None
 
     async def update_client_expiry(self, email: str, expiry_days: int) -> bool:
+        """Обновляет срок клиента во всех inbound'ах, где он есть."""
         logger.info(f"3x-ui: обновление срока для {email} до {expiry_days} дней")
+        
         client_uuid = await self._get_client_uuid_by_email(email)
         if not client_uuid:
             logger.error(f"3x-ui: клиент {email} не найден")
             return False
-
+        
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
         update_data = {
             "id": client_uuid,
@@ -196,11 +224,33 @@ class XRayAPI:
             "totalGB": 0,
             "flow": "xtls-rprx-vision",
         }
-        result = await self._api_post(
-            f"/panel/api/inbounds/updateClient/{config.XUI_INBOUND_ID}/{client_uuid}",
-            update_data
-        )
-        return result and result.get("success")
+        
+        # Обновляем во всех inbound'ах, где есть клиент
+        inbounds = await self._get_inbounds()
+        success_count = 0
+        
+        for inbound in inbounds:
+            settings = inbound.get("settings", {})
+            if isinstance(settings, str):
+                settings = json.loads(settings)
+            
+            # Проверяем, есть ли клиент в этом inbound'е
+            if not any(c.get("email") == email for c in settings.get("clients", [])):
+                continue
+            
+            inbound_id = inbound.get("id")
+            result = await self._api_post(
+                f"/panel/api/inbounds/updateClient/{inbound_id}/{client_uuid}",
+                update_data
+            )
+            
+            if result and result.get("success"):
+                success_count += 1
+                logger.info(f"3x-ui: ✅ срок для {email} обновлён в inbound {inbound_id}")
+            else:
+                logger.error(f"3x-ui: ❌ ошибка обновления в inbound {inbound_id}")
+        
+        return success_count > 0
 
     async def get_client_link(self, email: str) -> str | None:
         try:
@@ -209,56 +259,66 @@ class XRayAPI:
                 base = "/".join(template.split("/")[:-1])
                 return f"{base}/{email}"
             
-            # ✅ БЕРЁМ ДОМЕН ИЗ XUI_HOST
+            # БЕРЁМ ДОМЕН ИЗ XUI_HOST
             from urllib.parse import urlparse
             parsed = urlparse(config.XUI_HOST)
-            domain = parsed.netloc.split(":")[0]  # pandorapixis.bot.nu
+            domain = parsed.netloc.split(":")[0]
             return f"https://{domain}:2096/sub/{email}"
         except Exception as e:
             logger.error(f"3x-ui: ошибка генерации ссылки - {e}")
             return None
 
     async def remove_client(self, uuid: str) -> bool:
-        inbound = await self._get_inbound()
-        if not inbound:
-            return False
-
-        settings = inbound.get("settings", {})
-        if isinstance(settings, str):
-            settings = json.loads(settings)
-
-        clients = settings.get("clients", [])
-        new_clients = [c for c in clients if c.get("id") != uuid]
-        if len(new_clients) == len(clients):
-            return False
-
-        settings["clients"] = new_clients
-
-        update_data = {
-            "id": inbound.get("id"),
-            "protocol": inbound.get("protocol"),
-            "port": inbound.get("port"),
-            "listen": inbound.get("listen", ""),
-            "remark": inbound.get("remark", ""),
-            "enable": inbound.get("enable", True),
-            "expiryTime": inbound.get("expiryTime", 0),
-            "total": inbound.get("total", 0),
-            "trafficReset": inbound.get("trafficReset", "never"),
-            "settings": settings,
-            "streamSettings": inbound.get("streamSettings", {}),
-            "sniffing": inbound.get("sniffing", {"enabled": False}),
-            "tag": inbound.get("tag", ""),
-            "shareAddrStrategy": inbound.get("shareAddrStrategy", "listen"),
-            "shareAddr": inbound.get("shareAddr", ""),
-            "subSortIndex": inbound.get("subSortIndex", 1),
-            "originNodeGuid": inbound.get("originNodeGuid", ""),
-        }
-
-        result = await self._api_post(
-            f"/panel/api/inbounds/update/{config.XUI_INBOUND_ID}",
-            update_data
-        )
-        return result and result.get("success", False)
+        """Удаляет клиента из всех inbound'ов."""
+        inbounds = await self._get_inbounds()
+        success_count = 0
+        
+        for inbound in inbounds:
+            inbound_id = inbound.get("id")
+            settings = inbound.get("settings", {})
+            if isinstance(settings, str):
+                settings = json.loads(settings)
+            
+            clients = settings.get("clients", [])
+            new_clients = [c for c in clients if c.get("id") != uuid]
+            
+            if len(new_clients) == len(clients):
+                continue
+            
+            settings["clients"] = new_clients
+            
+            update_data = {
+                "id": inbound_id,
+                "protocol": inbound.get("protocol"),
+                "port": inbound.get("port"),
+                "listen": inbound.get("listen", ""),
+                "remark": inbound.get("remark", ""),
+                "enable": inbound.get("enable", True),
+                "expiryTime": inbound.get("expiryTime", 0),
+                "total": inbound.get("total", 0),
+                "trafficReset": inbound.get("trafficReset", "never"),
+                "settings": settings,
+                "streamSettings": inbound.get("streamSettings", {}),
+                "sniffing": inbound.get("sniffing", {"enabled": False}),
+                "tag": inbound.get("tag", ""),
+                "shareAddrStrategy": inbound.get("shareAddrStrategy", "listen"),
+                "shareAddr": inbound.get("shareAddr", ""),
+                "subSortIndex": inbound.get("subSortIndex", 1),
+                "originNodeGuid": inbound.get("originNodeGuid", ""),
+            }
+            
+            result = await self._api_post(
+                f"/panel/api/inbounds/update/{inbound_id}",
+                update_data
+            )
+            
+            if result and result.get("success"):
+                success_count += 1
+                logger.info(f"3x-ui: ✅ клиент удалён из inbound {inbound_id}")
+            else:
+                logger.error(f"3x-ui: ❌ ошибка удаления из inbound {inbound_id}")
+        
+        return success_count > 0
 
     async def close(self):
         if self._session:
