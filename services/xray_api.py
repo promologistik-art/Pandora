@@ -3,6 +3,9 @@ import logging
 import re
 import json
 import asyncio
+import secrets
+import string
+import uuid
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from config import config
@@ -20,6 +23,16 @@ class XRayAPI:
         if self._session is None:
             self._session = httpx.AsyncClient(verify=False, timeout=30.0)
         return self._session
+
+    def _generate_auth(self, length: int = 16) -> str:
+        """Генерирует случайную строку для Hysteria Auth."""
+        alphabet = string.ascii_lowercase + string.digits
+        return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+    def _generate_password(self, length: int = 16) -> str:
+        """Генерирует случайный пароль."""
+        alphabet = string.ascii_lowercase + string.digits
+        return ''.join(secrets.choice(alphabet) for _ in range(length))
 
     async def _api_get(self, path: str) -> dict | None:
         if not self.api_token:
@@ -92,9 +105,7 @@ class XRayAPI:
         return data.get("obj", [])
 
     async def _get_active_inbounds(self) -> list:
-        """
-        Получить список активных inbound'ов.
-        """
+        """Получить список активных inbound'ов."""
         inbounds = await self._get_inbounds()
         active = [inb for inb in inbounds if inb.get("enable", False)]
         logger.info(f"3x-ui: активные inbound'ы: {[inb.get('id') for inb in active]}")
@@ -107,35 +118,15 @@ class XRayAPI:
             return result.get("obj")
         return None
 
-    async def _get_client_uuid_by_email(self, email: str, retries: int = 5) -> str | None:
-        """
-        Получить UUID (id) клиента по email с повторными попытками.
-        """
-        for attempt in range(retries):
-            if attempt > 0:
-                wait_time = 1 * attempt
-                logger.info(f"3x-ui: ждём {wait_time} сек перед повторной попыткой получения UUID для {email}")
-                await asyncio.sleep(wait_time)
-            
-            client = await self._get_client_by_email(email)
-            if client:
-                client_uuid = client.get("id")
-                if client_uuid:
-                    logger.info(f"3x-ui: ✅ получен UUID {client_uuid} для {email}")
-                    return client_uuid
-            
-            logger.warning(f"3x-ui: попытка {attempt + 1}/{retries} - UUID для {email} не получен")
-        
-        return None
-
     async def add_client(self, email: str, expiry_days: int = 30) -> dict | None:
         """
         Создаёт клиента через /clients/add с указанием inboundIds.
         
-        Важно:
-        - НЕ передаём subId - панель генерирует сама (как для client_52, client_53)
-        - НЕ передаём id (UUID) - панель генерирует сама
-        - НЕ передаём password и auth - панель генерирует сама
+        Генерирует все необходимые поля на стороне бота:
+        - id (UUID)
+        - subId = email (ID подписки)
+        - password (случайный пароль)
+        - auth (Hysteria Auth)
         """
         logger.info(f"3x-ui: создание клиента {email}, срок {expiry_days} дней")
         
@@ -148,14 +139,22 @@ class XRayAPI:
         inbound_ids = [inb.get("id") for inb in active_inbounds]
         logger.info(f"3x-ui: привязываем клиента к inbound'ам: {inbound_ids}")
         
-        # 2. Вычисляем expiryTime (в миллисекундах)
+        # 2. Генерируем все необходимые поля
+        client_uuid = str(uuid.uuid4())
+        client_password = self._generate_password()
+        client_auth = self._generate_auth()
+        
+        # 3. Вычисляем expiryTime (в миллисекундах)
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
         logger.info(f"3x-ui: expiryTime = {expiry_time} ({expiry_days} дней)")
         
-        # 3. Формируем payload ТОЧНО как в панели
-        # НЕ передаём: subId, id, password, auth (панель генерирует сама)
+        # 4. Формируем payload ТОЧНО как в панели при создании через интерфейс
         client_payload = {
             "email": email,
+            "subId": email,                    # ID подписки = email
+            "id": client_uuid,                 # UUID (генерируем сами)
+            "password": client_password,       # Пароль (генерируем сами)
+            "auth": client_auth,               # Hysteria Auth (генерируем сами)
             "enable": True,
             "expiryTime": expiry_time,
             "limitIp": 3,
@@ -181,32 +180,13 @@ class XRayAPI:
         result = await self._api_post("/panel/api/clients/add", payload)
         
         if result and result.get("success"):
-            logger.info(f"3x-ui: ✅ клиент {email} создан, ожидаем генерацию UUID...")
-            
-            # Ждём, пока панель сгенерирует UUID
-            real_uuid = await self._get_client_uuid_by_email(email, retries=5)
-            
-            if real_uuid:
-                logger.info(f"3x-ui: ✅ клиент {email} создан с UUID {real_uuid}")
-                return {
-                    "uuid": real_uuid,
-                    "email": email,
-                }
-            else:
-                # Если UUID не получен - пробуем получить данные клиента
-                client_data = await self._get_client_by_email(email)
-                if client_data:
-                    logger.info(f"3x-ui: ✅ клиент {email} создан, данные получены")
-                    return {
-                        "uuid": client_data.get("id"),
-                        "email": email,
-                    }
-                else:
-                    logger.warning(f"3x-ui: клиент {email} создан, но данные не получены")
-                    return {
-                        "uuid": None,
-                        "email": email,
-                    }
+            logger.info(f"3x-ui: ✅ клиент {email} создан с UUID {client_uuid}")
+            return {
+                "uuid": client_uuid,
+                "email": email,
+                "password": client_password,
+                "auth": client_auth,
+            }
         
         logger.error(f"3x-ui: ❌ ошибка создания клиента: {result}")
         return None
@@ -228,6 +208,10 @@ class XRayAPI:
         # 2. Обновляем клиента (сохраняя все остальные поля)
         payload = {
             "email": email,
+            "subId": client.get("subId", email),
+            "id": client.get("id"),
+            "password": client.get("password", ""),
+            "auth": client.get("auth", ""),
             "enable": client.get("enable", True),
             "expiryTime": expiry_time,
             "limitIp": client.get("limitIp", 3),
