@@ -28,7 +28,7 @@ class Config:
 
     # === СБП ===
     SBP_PHONE: str = os.getenv("SBP_PHONE", "+79991234567")
-    SBP_BANK: str = os.getenv("SBP_BANK", "Сбер")
+    SBP_BANK: str = os.getenv("SBP_BANK", "ВБ")
 
     # === Внешние ссылки ===
     SUPPORT_BOT_USERNAME: str = os.getenv("SUPPORT_BOT_USERNAME", "silverzen_bot")
@@ -54,7 +54,3 @@ class Config:
 
 config = Config()
 
-# Проверка SUB_LINKS при старте
-if not config.SUB_LINKS:
-    import logging
-    logging.warning("⚠️ SUB_LINKS не заполнен! Триал и продление не будут работать!")
