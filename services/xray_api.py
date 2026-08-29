@@ -94,10 +94,8 @@ class XRayAPI:
     async def _get_active_inbounds(self) -> list:
         """
         Получить список активных inbound'ов.
-        Исключаем inbound'ы 8 и 9 (они выключены).
         """
         inbounds = await self._get_inbounds()
-        # Фильтруем: только включённые (enable=True)
         active = [inb for inb in inbounds if inb.get("enable", False)]
         logger.info(f"3x-ui: активные inbound'ы: {[inb.get('id') for inb in active]}")
         return active
@@ -112,7 +110,6 @@ class XRayAPI:
     async def _get_client_uuid_by_email(self, email: str, retries: int = 5) -> str | None:
         """
         Получить UUID (id) клиента по email с повторными попытками.
-        Панель генерирует UUID после создания, поэтому нужны повторные попытки.
         """
         for attempt in range(retries):
             if attempt > 0:
@@ -134,18 +131,11 @@ class XRayAPI:
     async def add_client(self, email: str, expiry_days: int = 30) -> dict | None:
         """
         Создаёт клиента через /clients/add с указанием inboundIds.
-        Использует ТОЧНО ТАКОЙ ЖЕ формат, как панель при создании через интерфейс.
         
-        Поля, которые генерирует панель (НЕ ПЕРЕДАЁМ):
-        - id (UUID)
-        - password
-        - auth (Hysteria Auth)
-        
-        Поля, которые ОБЯЗАТЕЛЬНО передаём:
-        - email (ID подписки)
-        - subId = email (тоже ID подписки)
-        - inboundIds (массив активных inbound'ов)
-        - expiryTime (расчётное значение)
+        Важно:
+        - НЕ передаём subId - панель генерирует сама (как для client_52, client_53)
+        - НЕ передаём id (UUID) - панель генерирует сама
+        - НЕ передаём password и auth - панель генерирует сама
         """
         logger.info(f"3x-ui: создание клиента {email}, срок {expiry_days} дней")
         
@@ -163,9 +153,9 @@ class XRayAPI:
         logger.info(f"3x-ui: expiryTime = {expiry_time} ({expiry_days} дней)")
         
         # 3. Формируем payload ТОЧНО как в панели
+        # НЕ передаём: subId, id, password, auth (панель генерирует сама)
         client_payload = {
             "email": email,
-            "subId": email,                    # ✅ subId = email (ID подписки)
             "enable": True,
             "expiryTime": expiry_time,
             "limitIp": 3,
@@ -181,7 +171,6 @@ class XRayAPI:
             "flow": "",
             "trafficReset": "never",
             "trafficResetDay": 1,
-            # ❌ НЕ передаём: id, password, auth (генерируются панелью)
         }
         
         payload = {
@@ -239,7 +228,6 @@ class XRayAPI:
         # 2. Обновляем клиента (сохраняя все остальные поля)
         payload = {
             "email": email,
-            "subId": client.get("subId", email),
             "enable": client.get("enable", True),
             "expiryTime": expiry_time,
             "limitIp": client.get("limitIp", 3),
