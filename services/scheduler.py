@@ -138,9 +138,39 @@ async def collect_traffic():
 # ============================================================
 
 async def check_expiring_subscriptions(bot: Bot):
+    """Проверяет истекающие подписки и отправляет напоминания."""
     today = date.today()
     async with async_session() as session:
-        # Подписки, истекающие через 3 дня
+        # ========================================
+        # 1. ПРОВЕРКА ЗА 7 ДНЕЙ (только платные подписки)
+        # ========================================
+        expires_7d = today + timedelta(days=7)
+        result = await session.execute(
+            select(Subscription)
+            .where(Subscription.status == "active")
+            .where(Subscription.expires_at == expires_7d)
+            .where(Subscription.is_trial == False)
+        )
+        subs_7d = result.scalars().all()
+
+        for sub in subs_7d:
+            client = await session.get(Client, sub.client_id)
+            if client:
+                days_left = (sub.expires_at - today).days
+                try:
+                    await bot.send_message(
+                        client.telegram_id,
+                        f"<b>⏰ Ваша подписка истекает через {days_left} дней!</b>\n\n"
+                        f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
+                        f"💳 Продлите подписку, чтобы не потерять доступ к VPN.\n\n"
+                        f"Для продления нажмите «📊 Статус» → «💳 Продлить подписку»"
+                    )
+                except Exception as e:
+                    logger.warning(f"Не удалось отправить напоминание (7 дней) клиенту {client.id}: {e}")
+
+        # ========================================
+        # 2. ПРОВЕРКА ЗА 3 ДНЯ (только платные подписки)
+        # ========================================
         expires_3d = today + timedelta(days=3)
         result = await session.execute(
             select(Subscription)
@@ -153,17 +183,85 @@ async def check_expiring_subscriptions(bot: Bot):
         for sub in subs_3d:
             client = await session.get(Client, sub.client_id)
             if client:
+                days_left = (sub.expires_at - today).days
                 try:
                     await bot.send_message(
                         client.telegram_id,
-                        "<b>⏰ Ваша подписка истекает через 3 дня.</b>\n"
-                        "Продлите, чтобы не потерять доступ.\n"
-                        "Используйте кнопку «💳 Продлить» в статусе."
+                        f"<b>⏰ Ваша подписка истекает через {days_left} дня!</b>\n\n"
+                        f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
+                        f"💳 Продлите подписку, чтобы не потерять доступ к VPN.\n\n"
+                        f"Для продления нажмите «📊 Статус» → «💳 Продлить подписку»"
                     )
                 except Exception as e:
-                    logger.warning(f"Не удалось отправить напоминание клиенту {client.id}: {e}")
+                    logger.warning(f"Не удалось отправить напоминание (3 дня) клиенту {client.id}: {e}")
 
-        # Подписки, истекающие сегодня
+        # ========================================
+        # 3. ПРОВЕРКА ЗА 2 ДНЯ (только платные подписки)
+        # ========================================
+        expires_2d = today + timedelta(days=2)
+        result = await session.execute(
+            select(Subscription)
+            .where(Subscription.status == "active")
+            .where(Subscription.expires_at == expires_2d)
+            .where(Subscription.is_trial == False)
+        )
+        subs_2d = result.scalars().all()
+
+        for sub in subs_2d:
+            client = await session.get(Client, sub.client_id)
+            if client:
+                days_left = (sub.expires_at - today).days
+                try:
+                    await bot.send_message(
+                        client.telegram_id,
+                        f"<b>⚠️ Ваша подписка истекает через {days_left} дня!</b>\n\n"
+                        f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
+                        f"⚡️ Осталось всего 2 дня! Продлите подписку сейчас.\n\n"
+                        f"Для продления нажмите «📊 Статус» → «💳 Продлить подписку»"
+                    )
+                except Exception as e:
+                    logger.warning(f"Не удалось отправить напоминание (2 дня) клиенту {client.id}: {e}")
+
+        # ========================================
+        # 4. ПРОВЕРКА ЗА 1 ДЕНЬ (триалы и платные подписки)
+        # ========================================
+        expires_1d = today + timedelta(days=1)
+        result = await session.execute(
+            select(Subscription)
+            .where(Subscription.status == "active")
+            .where(Subscription.expires_at == expires_1d)
+        )
+        subs_1d = result.scalars().all()
+
+        for sub in subs_1d:
+            client = await session.get(Client, sub.client_id)
+            if client:
+                if sub.is_trial:
+                    try:
+                        await bot.send_message(
+                            client.telegram_id,
+                            f"<b>⏰ Ваш триал заканчивается завтра!</b>\n\n"
+                            f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
+                            f"💳 Выберите тариф, чтобы продолжить пользоваться VPN.\n\n"
+                            f"Для выбора тарифа нажмите «📊 Статус» → «💳 Продлить подписку»"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Не удалось отправить напоминание (1 день) клиенту {client.id}: {e}")
+                else:
+                    try:
+                        await bot.send_message(
+                            client.telegram_id,
+                            f"<b>⏰ Ваша подписка истекает завтра!</b>\n\n"
+                            f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
+                            f"⚡️ Срочно продлите подписку, чтобы не потерять доступ.\n\n"
+                            f"Для продления нажмите «📊 Статус» → «💳 Продлить подписку»"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Не удалось отправить напоминание (1 день) клиенту {client.id}: {e}")
+
+        # ========================================
+        # 5. ПОДПИСКИ, ИСТЕКАЮЩИЕ СЕГОДНЯ (деактивация)
+        # ========================================
         result = await session.execute(
             select(Subscription)
             .where(Subscription.status == "active")
@@ -206,71 +304,77 @@ async def check_expiring_subscriptions(bot: Bot):
                 try:
                     await bot.send_message(
                         client.telegram_id,
-                        "<b>❌ Подписка истекла.</b>\n"
+                        "<b>❌ Ваша подписка истекла.</b>\n\n"
                         "Доступ приостановлен.\n"
-                        "Оплатите, чтобы возобновить."
-                    )
-                except Exception as e:
-                    logger.warning(f"Не удалось уведомить клиента {client.id}: {e}")
-
-        # Триалы, истекающие завтра
-        expires_tomorrow = today + timedelta(days=1)
-        result = await session.execute(
-            select(Subscription)
-            .where(Subscription.status == "active")
-            .where(Subscription.expires_at == expires_tomorrow)
-            .where(Subscription.is_trial == True)
-        )
-        trials = result.scalars().all()
-
-        for sub in trials:
-            client = await session.get(Client, sub.client_id)
-            if client:
-                try:
-                    await bot.send_message(
-                        client.telegram_id,
-                        "<b>⏰ Триал заканчивается завтра.</b>\n"
-                        "Выберите тариф, чтобы продолжить пользоваться VPN."
+                        "Оплатите, чтобы возобновить.\n\n"
+                        "Для оплаты нажмите «📊 Статус» → «💳 Продлить подписку»"
                     )
                 except Exception as e:
                     logger.warning(f"Не удалось уведомить клиента {client.id}: {e}")
 
 
 # ============================================================
-# Задача 3: Ежедневная сводка админу
+# Задача 3: Ежедневная сводка админу (ИСПРАВЛЕНА)
 # ============================================================
+
+def format_bytes(bytes_value: int) -> str:
+    """Форматирует байты в читаемый вид (KB, MB, GB, TB)."""
+    if bytes_value == 0:
+        return "0 B"
+    
+    units = ["B", "KB", "MB", "GB", "TB"]
+    i = 0
+    while bytes_value >= 1024 and i < len(units) - 1:
+        bytes_value /= 1024
+        i += 1
+    
+    return f"{bytes_value:.2f} {units[i]}"
+
 
 async def daily_report(bot: Bot):
+    """Отправляет ежедневную сводку админам."""
     today = date.today()
     yesterday = today - timedelta(days=1)
     tomorrow = today + timedelta(days=1)
 
     async with async_session() as session:
+        # ========================================
+        # 1. КЛИЕНТЫ
+        # ========================================
+        # Новые клиенты за вчера
         new_clients = await session.scalar(
             select(func.count(Client.id))
             .where(func.date(Client.created_at) == yesterday)
         )
 
+        # Всего клиентов
         total_clients = await session.scalar(select(func.count(Client.id)))
 
-        active_subs = await session.scalar(
-            select(func.count(Subscription.id))
+        # Активных клиентов (с активной подпиской)
+        active_clients = await session.scalar(
+            select(func.count(func.distinct(Subscription.client_id)))
             .where(Subscription.status == "active")
             .where(Subscription.expires_at >= today)
         )
 
+        # Истекло за вчера
         expired_yesterday = await session.scalar(
             select(func.count(Subscription.id))
             .where(Subscription.status == "expired")
             .where(Subscription.expires_at == yesterday)
         )
 
-        payments_yesterday = await session.scalar(
+        # ========================================
+        # 2. ФИНАНСЫ
+        # ========================================
+        # Выручка за день
+        payments_day = await session.scalar(
             select(func.sum(Payment.amount))
             .where(Payment.status == "confirmed")
             .where(func.date(Payment.confirmed_at) == yesterday)
         )
 
+        # Выручка за календарный месяц
         month_start = today.replace(day=1)
         payments_month = await session.scalar(
             select(func.sum(Payment.amount))
@@ -278,6 +382,9 @@ async def daily_report(bot: Bot):
             .where(Payment.confirmed_at >= month_start)
         )
 
+        # ========================================
+        # 3. ТРАФИК ЗА ВЧЕРА
+        # ========================================
         traffic = await session.execute(
             select(
                 func.sum(TrafficLog.upload_bytes).label("upload"),
@@ -286,9 +393,12 @@ async def daily_report(bot: Bot):
             .where(TrafficLog.date == yesterday)
         )
         traffic_data = traffic.one()
-        upload_mb = traffic_data.upload // (1024 * 1024) if traffic_data.upload else 0
-        download_mb = traffic_data.download // (1024 * 1024) if traffic_data.download else 0
+        upload_bytes = traffic_data.upload or 0
+        download_bytes = traffic_data.download or 0
 
+        # ========================================
+        # 4. КЛИЕНТЫ, ИСТЕКАЮЩИЕ ЗАВТРА
+        # ========================================
         expiring_tomorrow = await session.execute(
             select(Subscription, Client.username, Client.first_name)
             .join(Client, Subscription.client_id == Client.id)
@@ -297,32 +407,41 @@ async def daily_report(bot: Bot):
         )
         expiring_list = expiring_tomorrow.all()
 
-    report = (
-        f"<b>📊 Ежедневная сводка</b>\n"
-        f"Дата отчёта: {today.strftime('%d.%m.%Y')}\n"
-        f"Данные за: {yesterday.strftime('%d.%m.%Y')}\n\n"
-        f"<b>📈 Общие показатели:</b>\n"
-        f"Новых клиентов: {new_clients or 0}\n"
-        f"Всего клиентов: {total_clients or 0}\n"
-        f"Активных подписок: {active_subs or 0}\n"
-        f"Истекло: {expired_yesterday or 0}\n\n"
-        f"<b>💰 Финансы:</b>\n"
-        f"Выручка за день: {payments_yesterday or 0} руб.\n"
-        f"Выручка за месяц: {payments_month or 0} руб.\n\n"
-        f"<b>📊 Трафик за вчера ({yesterday.strftime('%d.%m')}):</b>\n"
-        f"Upload: {upload_mb} MB\n"
-        f"Download: {download_mb} MB\n\n"
-    )
+    # ========================================
+    # 5. ФОРМИРУЕМ ОТЧЁТ
+    # ========================================
+    report_lines = [
+        "<b>📊 Ежедневная сводка</b>",
+        f"📅 {today.strftime('%d.%m.%Y')} (данные за {yesterday.strftime('%d.%m.%Y')})",
+        "",
+        "<b>👥 Клиенты:</b>",
+        f"  • Новых: {new_clients or 0}",
+        f"  • Всего: {total_clients or 0}",
+        f"  • Активных подписок: {active_clients or 0}",
+        f"  • Истекло: {expired_yesterday or 0}",
+        "",
+        "<b>💰 Финансы:</b>",
+        f"  • За день: {payments_day or 0} руб.",
+        f"  • За месяц: {payments_month or 0} руб.",
+        "",
+        "<b>📊 Трафик за вчера ({yesterday.strftime('%d.%m')}):</b>",
+        f"  • Upload: {format_bytes(upload_bytes)}",
+        f"  • Download: {format_bytes(download_bytes)}",
+        "",
+    ]
 
     if expiring_list:
-        report += "<b>⚠️ Истекает завтра:</b>\n"
+        report_lines.append("<b>⚠️ Истекает завтра:</b>")
         for sub, username, first_name in expiring_list:
             name = username or first_name
             plan = "триал" if sub.is_trial else sub.plan
-            report += f"@{name} — до {sub.expires_at.strftime('%d.%m')} ({plan})\n"
+            report_lines.append(f"  • @{name} — до {sub.expires_at.strftime('%d.%m')} ({plan})")
     else:
-        report += "<b>✅ Никто не истекает завтра</b>"
+        report_lines.append("<b>✅ Никто не истекает завтра</b>")
 
+    report = "\n".join(report_lines)
+
+    # Отправляем админам
     for admin_id in config.ADMIN_IDS:
         try:
             await bot.send_message(admin_id, report)

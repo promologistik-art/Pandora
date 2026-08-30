@@ -50,7 +50,6 @@ async def get_client_active_subscriptions(client_id: int) -> list:
                 "expires_at": sub.expires_at.strftime('%d.%m.%Y'),
                 "plan": sub.plan,
                 "is_trial": sub.is_trial,
-                # ✅ УБРАЛИ sub_link — больше не храним
             }
             for sub in subs
         ]
@@ -82,7 +81,6 @@ async def show_user_profile_by_id(message: types.Message, user_id: int):
         if subscriptions:
             for sub in subscriptions:
                 sub_type = "🆓 триал" if sub["is_trial"] else "✅ оплачено"
-                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ
                 link = await xray.get_client_link(f"client_{client.id}") or "не назначена"
                 text += (
                     f"  • ID {sub['id']} | {sub_type}\n"
@@ -381,39 +379,37 @@ async def trial_start(callback: types.CallbackQuery):
         await session.flush()
 
         # ========================================
-        # ✅ СОЗДАНИЕ КЛИЕНТА В 3X-UI ДЛЯ ВСЕХ
+        # ✅ СОЗДАНИЕ КЛИЕНТА В 3X-UI
         # ========================================
         logger.info(f"✅ СОЗДАЕМ ТРИАЛЬНОГО КЛИЕНТА В 3X-UI для @{client.username} (ID: {client.id})")
-        
-        # ✅ Генерируем UUID заранее
-        import uuid
-        new_uuid = str(uuid.uuid4())
-        sub.xray_uuid = new_uuid
-        await session.commit()
         
         xray_result = await xray.add_client(
             email=f"client_{client.id}",
             expiry_days=config.TRIAL_DAYS
         )
+        
+        link = None
         if xray_result:
-            # ✅ Сохраняем UUID (он уже есть в sub.xray_uuid)
             real_uuid = xray_result.get("uuid")
-            if real_uuid and real_uuid != new_uuid:
+            if real_uuid:
                 sub.xray_uuid = real_uuid
                 await session.commit()
                 logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
             
-            # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ (НЕ СОХРАНЯЕМ В БД)
+            # Генерируем ссылку
             link = await xray.get_client_link(f"client_{client.id}")
             if link:
-                logger.info(f"✅ Триальная ссылка получена через API: {link}")
+                sub.sub_link = link
+                await session.commit()
+                logger.info(f"✅ Триальная ссылка сохранена: {link}")
             else:
-                logger.warning("⚠️ Триальная ссылка через API не получена")
+                logger.warning("⚠️ Триальная ссылка не получена")
         else:
             # Если не удалось создать клиента — используем SUB_LINKS (как резерв)
-            sub_link = await get_free_sub_link(session)
-            link = sub_link
-            await session.commit()
+            link = await get_free_sub_link(session)
+            if link:
+                sub.sub_link = link
+                await session.commit()
             logger.error("❌ Не удалось создать клиента в 3x-ui для триала, использована SUB_LINKS")
 
         event = EventLog(
@@ -424,7 +420,7 @@ async def trial_start(callback: types.CallbackQuery):
         session.add(event)
         await session.commit()
 
-    # ✅ ПОКАЗЫВАЕМ ССЫЛКУ (НЕ ИЗ БД, А СГЕНЕРИРОВАННУЮ)
+    # ✅ ПОКАЗЫВАЕМ ССЫЛКУ
     await callback.message.answer(
         f"<b>🎉 Триал-доступ активирован на {config.TRIAL_DAYS} дня!</b>\n\n"
         f"<b>Ваша ссылка:</b>\n"
@@ -500,8 +496,8 @@ async def show_status(message: types.Message):
     days_left = (sub.expires_at - date.today()).days
     trial_text = " (триал)" if sub.is_trial else ""
     
-    # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ
-    link = await xray.get_client_link(f"client_{client.id}") or "не указана"
+    # Ссылка уже сохранена в БД при создании
+    link = sub.sub_link or await xray.get_client_link(f"client_{client.id}") or "не указана"
 
     await message.answer(
         "<b>📊 Статус подписки</b>\n\n"
@@ -524,7 +520,7 @@ async def show_status(message: types.Message):
 
 
 # ========================
-# ПОМОЩЬ
+# ПОМОЩЬ И ИНСТРУКЦИИ
 # ========================
 
 @router.callback_query(F.data == "menu:help")
@@ -539,21 +535,72 @@ async def cmd_help_command(message: types.Message):
 
 
 async def show_help(message: types.Message):
-    await message.answer(
+    """Показывает помощь с инструкцией по Happ."""
+    text = (
         "<b>🆘 Помощь и FAQ</b>\n\n"
         "<b>Частые вопросы:</b>\n"
         "• Не работает YouTube — попробуйте переподключиться\n"
         "• Медленная скорость — проверьте сервер в статусе\n"
-        "• Как установить на устройство — см. инструкции ниже\n\n"
+        "• Как установить на устройство — см. инструкции ниже\n"
+        "• Российские сервисы просят выключить VPN — см. настройку Happ\n\n"
         f"<b>Поддержка:</b> @{config.SUPPORT_BOT_USERNAME}\n"
-        f"<b>ВКонтакте:</b> {config.VK_PAGE}",
-        reply_markup=help_keyboard()
+        f"<b>ВКонтакте:</b> {config.VK_PAGE}"
     )
+    await message.answer(text, reply_markup=help_keyboard())
 
 
-# ========================
-# ИНСТРУКЦИИ И СКАЧИВАНИЕ
-# ========================
+@router.callback_query(F.data == "help:happ_bypass")
+async def happ_bypass_instructions(callback: types.CallbackQuery):
+    """Инструкция по настройке Happ для обхода белых списков."""
+    text = (
+        "📖 <b>Настройка Happ для обхода белых списков</b>\n\n"
+        "Некоторые приложения в нашей великой стране при запуске спрашивают у смартфона: "
+        "<i>«ВПН включен?»</i> Если Да, то приложение, например ВК, выдает сообщение "
+        "<i>«Выключите впн»</i>.\n\n"
+        "Как этого избежать?\n\n"
+        "1️⃣ Откройте приложение Happ на смартфоне\n"
+        "2️⃣ Нажмите на шестерёнку ⚙️ в левом верхнем углу\n"
+        "3️⃣ Выберите <b>«Прокси для выбранных приложений»</b>\n"
+        "4️⃣ Выберите режим <b>«Обход»</b> (Bypass)\n"
+        "5️⃣ Отметьте галочками ✅ российские сервисы, которые должны работать напрямую:\n"
+        "   • 2ГИС\n"
+        "   • Авито\n"
+        "   • билайн\n"
+        "   • Госключ\n"
+        "   • Госуслуги\n"
+        "   • Делимобиль\n"
+        "   • М.Видео\n"
+        "   • Магнит\n"
+        "   • Магнит Доставка\n"
+        "   • и другие нужные вам приложения\n\n"
+        "📌 <b>Как это работает:</b>\n"
+        "• Отмеченные приложения <b>НЕ ИСПОЛЬЗУЮТ</b> VPN и подключаются напрямую\n"
+        "• Все остальные приложения работают через VPN\n\n"
+        "💡 <b>Важно:</b> Если банковское приложение или госуслуги не работают через VPN - "
+        "добавьте их в список обхода.\n\n"
+        "⏱ <b>2 минуты</b> - и все российские сервисы доступны."
+    )
+    
+    # Отправляем текст
+    await callback.message.answer(text)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "help:instructions")
+async def send_instructions(callback: types.CallbackQuery):
+    """Инструкция по установке."""
+    await callback.message.answer(
+        "<b>📖 Инструкция по установке</b>\n\n"
+        "1. Скачайте приложение Happ\n"
+        "2. Скопируйте ссылку из раздела «📊 Статус» в @PyxisPandorae_bot\n"
+        "3. В приложении добавьте подписку:\n"
+        "   • Тип: Подписка\n"
+        "   • Имя: любое\n"
+        "   • URL: вставьте ссылку\n"
+        "4. Подключитесь"
+    )
+    await callback.answer()
+
 
 @router.callback_query(F.data == "help:downloads")
 async def show_downloads(callback: types.CallbackQuery):
@@ -582,21 +629,6 @@ async def send_download_link(callback: types.CallbackQuery):
         return
     await callback.message.answer(
         f"<b>Скачать для {info['name']}:</b>\n{info['url']}\n\nВсе версии: https://www.happ.su/main/ru"
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "help:instructions")
-async def send_instructions(callback: types.CallbackQuery):
-    await callback.message.answer(
-        "<b>📖 Инструкция по установке</b>\n\n"
-        "1. Скачайте приложение Happ\n"
-        "2. Скопируйте ссылку из раздела «📊 Статус» в @PyxisPandorae_bot\n"
-        "3. В приложении добавьте подписку:\n"
-        "   • Тип: Подписка\n"
-        "   • Имя: любое\n"
-        "   • URL: вставьте ссылку\n"
-        "4. Подключитесь"
     )
     await callback.answer()
 
