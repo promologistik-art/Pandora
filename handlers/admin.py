@@ -11,7 +11,7 @@ from sqlalchemy import select, func, text
 
 from config import config
 from database.engine import async_session
-from database.models import Client, Subscription, Payment, EventLog, Referral
+from database.models import Client, Subscription, Payment, EventLog, Referral, TrafficLog
 from services.client_service import (
     get_or_create_client, get_active_subscription,
     is_admin, get_free_sub_link
@@ -69,7 +69,6 @@ async def get_client_active_subscriptions(client_id: int) -> List[Dict[str, Any]
                 "expires_at": sub.expires_at.strftime('%d.%m.%Y'),
                 "plan": sub.plan,
                 "is_trial": sub.is_trial,
-                # ✅ УБРАЛИ sub_link
             }
             for sub in subs
         ]
@@ -476,7 +475,6 @@ async def list_clients(callback: types.CallbackQuery):
             sub_text = "нет подписки"
             emoji = "❌"
         
-        # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ
         link = await xray.get_client_link(f"client_{c.id}") or "нет ссылки"
         
         text += (
@@ -543,7 +541,6 @@ async def show_user_profile(message: types.Message, user_id: int):
         if subscriptions:
             for sub in subscriptions:
                 sub_type = "🆓 триал" if sub["is_trial"] else "✅ оплачено"
-                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ
                 link = await xray.get_client_link(f"client_{client.id}") or "не назначена"
                 text += (
                     f"  • ID {sub['id']} | {sub_type}\n"
@@ -601,7 +598,6 @@ async def show_user_profile_callback(callback: types.CallbackQuery):
         if subscriptions:
             for sub in subscriptions:
                 sub_type = "🆓 триал" if sub["is_trial"] else "✅ оплачено"
-                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ
                 link = await xray.get_client_link(f"client_{client_id}") or "не назначена"
                 text += (
                     f"  • ID {sub['id']} | {sub_type}\n"
@@ -823,7 +819,6 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             await session.commit()
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id}")
             
-            # ✅ Пересоздаём клиента в 3x-ui для ВСЕХ
             old_uuid = sub.xray_uuid
             
             if old_uuid:
@@ -842,9 +837,10 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
                     await session.commit()
                     logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
                 
-                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ, НЕ СОХРАНЯЕМ В БД
                 new_link = await xray.get_client_link(f"client_{client.id}")
                 if new_link:
+                    sub.sub_link = new_link
+                    await session.commit()
                     logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
         else:
             await session.execute(
@@ -864,7 +860,6 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
             await session.commit()
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id}")
             
-            # ✅ Создаём клиента в 3x-ui для ВСЕХ
             xray_result = await xray.add_client(
                 email=f"client_{client.id}",
                 expiry_days=(sub.expires_at - date.today()).days
@@ -877,9 +872,10 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
                     await session.commit()
                     logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
                 
-                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ, НЕ СОХРАНЯЕМ В БД
                 new_link = await xray.get_client_link(f"client_{client.id}")
                 if new_link:
+                    sub.sub_link = new_link
+                    await session.commit()
                     logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
 
         event = EventLog(
@@ -1411,6 +1407,110 @@ async def server_status(callback: types.CallbackQuery):
 
 
 # ========================
+# ОТЧЕТ ПО ТРАФИКУ
+# ========================
+
+@router.callback_query(F.data == "admin:traffic_report")
+async def traffic_report(callback: types.CallbackQuery):
+    """Показывает отчет по трафику за сегодня и вчера."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    
+    async with async_session() as session:
+        # ========================================
+        # 1. ТРАФИК ЗА СЕГОДНЯ
+        # ========================================
+        traffic_today = await session.execute(
+            select(
+                func.sum(TrafficLog.upload_bytes).label("upload"),
+                func.sum(TrafficLog.download_bytes).label("download")
+            )
+            .where(TrafficLog.date == today)
+        )
+        data_today = traffic_today.one()
+        upload_today = data_today.upload or 0
+        download_today = data_today.download or 0
+
+        # ========================================
+        # 2. ТРАФИК ЗА ВЧЕРА
+        # ========================================
+        traffic_yesterday = await session.execute(
+            select(
+                func.sum(TrafficLog.upload_bytes).label("upload"),
+                func.sum(TrafficLog.download_bytes).label("download")
+            )
+            .where(TrafficLog.date == yesterday)
+        )
+        data_yesterday = traffic_yesterday.one()
+        upload_yesterday = data_yesterday.upload or 0
+        download_yesterday = data_yesterday.download or 0
+
+        # ========================================
+        # 3. ТОП-5 КЛИЕНТОВ ПО ТРАФИКУ ЗА ВЧЕРА
+        # ========================================
+        top_clients = await session.execute(
+            select(
+                Client.id,
+                Client.username,
+                Client.first_name,
+                TrafficLog.upload_bytes,
+                TrafficLog.download_bytes
+            )
+            .join(Client, TrafficLog.client_id == Client.id)
+            .where(TrafficLog.date == yesterday)
+            .order_by((TrafficLog.upload_bytes + TrafficLog.download_bytes).desc())
+            .limit(5)
+        )
+        top_list = top_clients.all()
+
+    # ========================================
+    # 4. ФОРМИРУЕМ ОТЧЁТ
+    # ========================================
+    def format_bytes(bytes_value: int) -> str:
+        if bytes_value == 0:
+            return "0 B"
+        units = ["B", "KB", "MB", "GB", "TB"]
+        i = 0
+        while bytes_value >= 1024 and i < len(units) - 1:
+            bytes_value /= 1024
+            i += 1
+        return f"{bytes_value:.2f} {units[i]}"
+
+    report_lines = [
+        "<b>📊 Отчет по трафику</b>",
+        "",
+        f"<b>📅 Сегодня ({today.strftime('%d.%m.%Y')}):</b>",
+        f"  • Upload: {format_bytes(upload_today)}",
+        f"  • Download: {format_bytes(download_today)}",
+        f"  • Всего: {format_bytes(upload_today + download_today)}",
+        "",
+        f"<b>📅 Вчера ({yesterday.strftime('%d.%m.%Y')}):</b>",
+        f"  • Upload: {format_bytes(upload_yesterday)}",
+        f"  • Download: {format_bytes(download_yesterday)}",
+        f"  • Всего: {format_bytes(upload_yesterday + download_yesterday)}",
+        "",
+    ]
+
+    if top_list:
+        report_lines.append("<b>🏆 Топ-5 клиентов за вчера:</b>")
+        for i, (client_id, username, first_name, up, down) in enumerate(top_list, 1):
+            name = username or first_name or f"ID {client_id}"
+            total = (up or 0) + (down or 0)
+            report_lines.append(f"  {i}. @{name} — {format_bytes(total)}")
+    else:
+        report_lines.append("<b>📭 Нет данных по клиентам за вчера</b>")
+
+    report = "\n".join(report_lines)
+
+    await callback.message.answer(report)
+    await callback.answer()
+
+
+# ========================
 # РАССЫЛКА
 # ========================
 
@@ -1429,17 +1529,14 @@ async def broadcast_start(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ✅ ИСПРАВЛЕНО: рассылка с фото/видео/документами
 @router.message(AdminStates.waiting_broadcast_text)
 async def broadcast_send(message: types.Message, state: FSMContext):
     """Отправляет рассылку: текст + медиа (фото, видео, документы)."""
     if not is_admin(message.from_user.id):
         return
 
-    # Получаем текст (из текстового сообщения или подписи к медиа)
     text = message.text or message.caption or ""
 
-    # Получаем список активных клиентов
     async with async_session() as session:
         result = await session.execute(
             select(Client.telegram_id).where(Client.status == "active")
@@ -1454,7 +1551,6 @@ async def broadcast_send(message: types.Message, state: FSMContext):
     success = 0
     for tid in clients:
         try:
-            # Отправляем в зависимости от типа медиа
             if message.photo:
                 await message.bot.send_photo(
                     tid,
@@ -1473,7 +1569,7 @@ async def broadcast_send(message: types.Message, state: FSMContext):
                     message.document.file_id,
                     caption=text
                 )
-            elif message.animation:  # GIF
+            elif message.animation:
                 await message.bot.send_animation(
                     tid,
                     message.animation.file_id,
@@ -1492,7 +1588,6 @@ async def broadcast_send(message: types.Message, state: FSMContext):
                     caption=text
                 )
             else:
-                # Только текст
                 await message.bot.send_message(tid, text)
             success += 1
         except Exception as e:
@@ -1572,7 +1667,6 @@ async def payment_confirm_final(callback: types.CallbackQuery):
         existing_sub = await get_active_subscription(client.id, session)
 
         if existing_sub:
-            # ПРОДЛЕВАЕМ существующую подписку
             existing_sub.expires_at = existing_sub.expires_at + timedelta(days=tariff["days"])
             existing_sub.plan = tariff_key
             existing_sub.is_trial = False
@@ -1580,7 +1674,6 @@ async def payment_confirm_final(callback: types.CallbackQuery):
             await session.commit()
             logger.info(f"Подписка {sub.id} продлена до {sub.expires_at} для клиента {client.id} (продление)")
             
-            # ✅ Пересоздаём клиента в 3x-ui для ВСЕХ
             old_uuid = sub.xray_uuid
             
             if old_uuid:
@@ -1599,12 +1692,12 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                     await session.commit()
                     logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
                 
-                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ, НЕ СОХРАНЯЕМ В БД
                 new_link = await xray.get_client_link(f"client_{client.id}")
                 if new_link:
+                    sub.sub_link = new_link
+                    await session.commit()
                     logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
         else:
-            # СОЗДАЁМ НОВУЮ ПОДПИСКУ
             await session.execute(
                 text("UPDATE subscriptions SET status = 'expired' WHERE client_id = :uid AND status = 'active'"),
                 {"uid": client.id}
@@ -1622,7 +1715,6 @@ async def payment_confirm_final(callback: types.CallbackQuery):
             await session.commit()
             logger.info(f"Создана новая подписка {sub.id} для клиента {client.id} (первая оплата)")
             
-            # ✅ Создаём клиента в 3x-ui для ВСЕХ
             xray_result = await xray.add_client(
                 email=f"client_{client.id}",
                 expiry_days=(sub.expires_at - date.today()).days
@@ -1635,9 +1727,10 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                     await session.commit()
                     logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
                 
-                # ✅ ГЕНЕРИРУЕМ ССЫЛКУ, НЕ СОХРАНЯЕМ В БД
                 new_link = await xray.get_client_link(f"client_{client.id}")
                 if new_link:
+                    sub.sub_link = new_link
+                    await session.commit()
                     logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
 
         # ========================================
@@ -1687,8 +1780,7 @@ async def payment_confirm_final(callback: types.CallbackQuery):
     # ОТПРАВКА СООБЩЕНИЯ КЛИЕНТУ
     # ========================================
     try:
-        # ✅ ГЕНЕРИРУЕМ ССЫЛКУ НА ЛЕТУ
-        link = await xray.get_client_link(f"client_{client.id}") or "не назначена"
+        link = sub.sub_link or await xray.get_client_link(f"client_{client.id}") or "не назначена"
         
         message_text = (
             f"<b>✅ Оплата подтверждена!</b>\n\n"
