@@ -72,7 +72,7 @@ async def collect_traffic_with_retry(max_retries: int = 3, delay: int = 10):
 
 
 async def collect_traffic():
-    """Собирает трафик клиентов за вчерашний день."""
+    """Собирает трафик клиентов за вчерашний день через /clients/traffic/{email}."""
     yesterday = date.today() - timedelta(days=1)
     
     async with async_session() as session:
@@ -92,7 +92,7 @@ async def collect_traffic():
         count = 0
         for client in clients:
             sub = await get_active_subscription(client.id)
-            if not sub or not sub.xray_uuid:
+            if not sub:
                 continue
             
             try:

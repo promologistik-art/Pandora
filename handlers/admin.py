@@ -1407,12 +1407,12 @@ async def server_status(callback: types.CallbackQuery):
 
 
 # ========================
-# ОТЧЕТ ПО ТРАФИКУ
+# ОТЧЕТ ПО ТРАФИКУ (В РЕАЛЬНОМ ВРЕМЕНИ)
 # ========================
 
 @router.callback_query(F.data == "admin:traffic_report")
 async def traffic_report(callback: types.CallbackQuery):
-    """Показывает отчет по трафику за сегодня и вчера."""
+    """Показывает отчет по трафику за сегодня и вчера в реальном времени из 3x-ui."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
@@ -1420,56 +1420,56 @@ async def traffic_report(callback: types.CallbackQuery):
     today = date.today()
     yesterday = today - timedelta(days=1)
     
+    # Получаем всех активных клиентов
     async with async_session() as session:
-        # ========================================
-        # 1. ТРАФИК ЗА СЕГОДНЯ
-        # ========================================
-        traffic_today = await session.execute(
-            select(
-                func.sum(TrafficLog.upload_bytes).label("upload"),
-                func.sum(TrafficLog.download_bytes).label("download")
-            )
-            .where(TrafficLog.date == today)
+        result = await session.execute(
+            select(Client)
+            .join(Subscription, Client.id == Subscription.client_id)
+            .where(Subscription.status == "active")
+            .where(Subscription.expires_at >= today)
+            .distinct()
         )
-        data_today = traffic_today.one()
-        upload_today = data_today.upload or 0
-        download_today = data_today.download or 0
-
-        # ========================================
-        # 2. ТРАФИК ЗА ВЧЕРА
-        # ========================================
-        traffic_yesterday = await session.execute(
-            select(
-                func.sum(TrafficLog.upload_bytes).label("upload"),
-                func.sum(TrafficLog.download_bytes).label("download")
-            )
-            .where(TrafficLog.date == yesterday)
-        )
-        data_yesterday = traffic_yesterday.one()
-        upload_yesterday = data_yesterday.upload or 0
-        download_yesterday = data_yesterday.download or 0
-
-        # ========================================
-        # 3. ТОП-5 КЛИЕНТОВ ПО ТРАФИКУ ЗА ВЧЕРА
-        # ========================================
-        top_clients = await session.execute(
-            select(
-                Client.id,
-                Client.username,
-                Client.first_name,
-                TrafficLog.upload_bytes,
-                TrafficLog.download_bytes
-            )
-            .join(Client, TrafficLog.client_id == Client.id)
-            .where(TrafficLog.date == yesterday)
-            .order_by((TrafficLog.upload_bytes + TrafficLog.download_bytes).desc())
-            .limit(5)
-        )
-        top_list = top_clients.all()
-
-    # ========================================
-    # 4. ФОРМИРУЕМ ОТЧЁТ
-    # ========================================
+        clients = result.scalars().all()
+    
+    if not clients:
+        await callback.message.answer("📭 Нет активных клиентов.")
+        await callback.answer()
+        return
+    
+    # Собираем трафик в реальном времени из 3x-ui
+    total_up = 0
+    total_down = 0
+    
+    # Для топа по клиентам
+    client_traffic = {}
+    
+    for client in clients:
+        try:
+            data = await xray._api_get(f"/panel/api/clients/traffic/client_{client.id}")
+            if data and data.get("success"):
+                client_data = data.get("obj", {})
+                up = client_data.get("up", 0)
+                down = client_data.get("down", 0)
+                
+                total_up += up
+                total_down += down
+                
+                client_traffic[client.id] = {
+                    "username": client.username or client.first_name or f"ID {client.id}",
+                    "up": up,
+                    "down": down,
+                    "total": up + down
+                }
+        except Exception as e:
+            logger.error(f"Ошибка получения трафика для client_{client.id}: {e}")
+    
+    # Топ-5 клиентов по трафику
+    top_clients = sorted(
+        client_traffic.values(),
+        key=lambda x: x["total"],
+        reverse=True
+    )[:5]
+    
     def format_bytes(bytes_value: int) -> str:
         if bytes_value == 0:
             return "0 B"
@@ -1481,28 +1481,23 @@ async def traffic_report(callback: types.CallbackQuery):
         return f"{bytes_value:.2f} {units[i]}"
 
     report_lines = [
-        "<b>📊 Отчет по трафику</b>",
+        "<b>📊 Отчет по трафику (в реальном времени)</b>",
         "",
-        f"<b>📅 Сегодня ({today.strftime('%d.%m.%Y')}):</b>",
-        f"  • Upload: {format_bytes(upload_today)}",
-        f"  • Download: {format_bytes(download_today)}",
-        f"  • Всего: {format_bytes(upload_today + download_today)}",
+        f"<b>📅 Всего (за всё время):</b>",
+        f"  • Upload: {format_bytes(total_up)}",
+        f"  • Download: {format_bytes(total_down)}",
+        f"  • Всего: {format_bytes(total_up + total_down)}",
         "",
-        f"<b>📅 Вчера ({yesterday.strftime('%d.%m.%Y')}):</b>",
-        f"  • Upload: {format_bytes(upload_yesterday)}",
-        f"  • Download: {format_bytes(download_yesterday)}",
-        f"  • Всего: {format_bytes(upload_yesterday + download_yesterday)}",
+        "<i>⚠️ Данные показывают общий трафик клиентов (без разбивки по дням)</i>",
         "",
     ]
 
-    if top_list:
-        report_lines.append("<b>🏆 Топ-5 клиентов за вчера:</b>")
-        for i, (client_id, username, first_name, up, down) in enumerate(top_list, 1):
-            name = username or first_name or f"ID {client_id}"
-            total = (up or 0) + (down or 0)
-            report_lines.append(f"  {i}. @{name} — {format_bytes(total)}")
+    if top_clients:
+        report_lines.append("<b>🏆 Топ-5 клиентов по трафику:</b>")
+        for i, client in enumerate(top_clients, 1):
+            report_lines.append(f"  {i}. {client['username']} — {format_bytes(client['total'])}")
     else:
-        report_lines.append("<b>📭 Нет данных по клиентам за вчера</b>")
+        report_lines.append("<b>📭 Нет данных по клиентам</b>")
 
     report = "\n".join(report_lines)
 
