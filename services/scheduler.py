@@ -260,8 +260,54 @@ async def check_expiring_subscriptions(bot: Bot):
                         logger.warning(f"Не удалось отправить напоминание (1 день) клиенту {client.id}: {e}")
 
         # ========================================
-        # 5. ПОДПИСКИ, ИСТЕКАЮЩИЕ СЕГОДНЯ (деактивация)
+        # 5. ПРОВЕРКА ЗА 12 ЧАСОВ (триалы и платные подписки)
         # ========================================
+        # Проверяем подписки, которые истекают сегодня вечером
+        # Запускается в 12:00, поэтому проверяем подписки с expires_at == today
+        result = await session.execute(
+            select(Subscription)
+            .where(Subscription.status == "active")
+            .where(Subscription.expires_at == today)
+        )
+        subs_today_12h = result.scalars().all()
+
+        for sub in subs_today_12h:
+            client = await session.get(Client, sub.client_id)
+            if client:
+                # Проверяем, не истекла ли уже подписка (на случай если проверка запустилась позже)
+                if sub.expires_at < today:
+                    continue
+                    
+                if sub.is_trial:
+                    try:
+                        await bot.send_message(
+                            client.telegram_id,
+                            f"<b>⚠️ Ваш триал истекает сегодня в 23:59!</b>\n\n"
+                            f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
+                            f"⏳ Осталось меньше 12 часов!\n"
+                            f"💳 Продлите подписку, чтобы не потерять доступ.\n\n"
+                            f"Для продления нажмите «📊 Статус» → «💳 Продлить подписку»"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Не удалось отправить напоминание (12ч) клиенту {client.id}: {e}")
+                else:
+                    try:
+                        await bot.send_message(
+                            client.telegram_id,
+                            f"<b>⚠️ Ваша подписка истекает сегодня в 23:59!</b>\n\n"
+                            f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
+                            f"⏳ Осталось меньше 12 часов!\n"
+                            f"💳 Срочно продлите подписку!\n\n"
+                            f"Для продления нажмите «📊 Статус» → «💳 Продлить подписку»"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Не удалось отправить напоминание (12ч) клиенту {client.id}: {e}")
+
+        # ========================================
+        # 6. ПОДПИСКИ, ИСТЕКАЮЩИЕ СЕГОДНЯ (деактивация в 23:59)
+        # ========================================
+        # Эта проверка запускается в 23:30, чтобы деактивировать подписки в конце дня
+        # Используем отдельную проверку, чтобы не дублировать с 12-часовой
         result = await session.execute(
             select(Subscription)
             .where(Subscription.status == "active")
@@ -314,7 +360,7 @@ async def check_expiring_subscriptions(bot: Bot):
 
 
 # ============================================================
-# Задача 3: Ежедневная сводка админу (ИСПРАВЛЕНА)
+# Задача 3: Ежедневная сводка админу
 # ============================================================
 
 def format_bytes(bytes_value: int) -> str:
@@ -410,9 +456,11 @@ async def daily_report(bot: Bot):
     # ========================================
     # 5. ФОРМИРУЕМ ОТЧЁТ
     # ========================================
+    yesterday_str = yesterday.strftime('%d.%m')
+    
     report_lines = [
         "<b>📊 Ежедневная сводка</b>",
-        f"📅 {today.strftime('%d.%m.%Y')} (данные за {yesterday.strftime('%d.%m.%Y')})",
+        f"📅 {today.strftime('%d.%m.%Y')} (данные за {yesterday_str})",
         "",
         "<b>👥 Клиенты:</b>",
         f"  • Новых: {new_clients or 0}",
@@ -424,7 +472,7 @@ async def daily_report(bot: Bot):
         f"  • За день: {payments_day or 0} руб.",
         f"  • За месяц: {payments_month or 0} руб.",
         "",
-        "<b>📊 Трафик за вчера ({yesterday.strftime('%d.%m')}):</b>",
+        f"<b>📊 Трафик за вчера ({yesterday_str}):</b>",
         f"  • Upload: {format_bytes(upload_bytes)}",
         f"  • Download: {format_bytes(download_bytes)}",
         "",
@@ -512,22 +560,40 @@ async def start_scheduler(bot: Bot):
     # 4. Напоминания об истечении — в 9:00 МСК
     scheduler.add_job(
         check_expiring_subscriptions,
-        CronTrigger(hour=5, minute=0),
+        CronTrigger(hour=5, minute=0),  # 8:00 МСК (5:00 UTC)
         args=[bot],
         id="check_expiring",
         replace_existing=True,
     )
 
-    # 5. Ежедневная сводка — в 8:00 МСК
+    # 5. Напоминания за 12 часов — в 12:00 МСК (для подписок, истекающих сегодня)
+    scheduler.add_job(
+        check_expiring_subscriptions,
+        CronTrigger(hour=9, minute=0),  # 12:00 МСК (9:00 UTC)
+        args=[bot],
+        id="check_expiring_12h",
+        replace_existing=True,
+    )
+
+    # 6. Деактивация истекших подписок — в 23:30 МСК
+    scheduler.add_job(
+        check_expiring_subscriptions,
+        CronTrigger(hour=20, minute=30),  # 23:30 МСК (20:30 UTC)
+        args=[bot],
+        id="check_expiring_deactivate",
+        replace_existing=True,
+    )
+
+    # 7. Ежедневная сводка — в 8:00 МСК
     scheduler.add_job(
         daily_report,
-        CronTrigger(hour=4, minute=0),
+        CronTrigger(hour=4, minute=0),  # 7:00 МСК (4:00 UTC)
         args=[bot],
         id="daily_report",
         replace_existing=True,
     )
 
-    # 6. Мониторинг сервера — каждые 30 минут
+    # 8. Мониторинг сервера — каждые 30 минут
     scheduler.add_job(
         monitor_server,
         IntervalTrigger(minutes=30),
