@@ -9,7 +9,7 @@ def admin_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="👥 Клиенты", callback_data="admin:clients")
     builder.button(text="📊 Статистика", callback_data="admin:stats")
     builder.button(text="🖥 Сервер", callback_data="admin:server")
-    builder.button(text="📊 Трафик", callback_data="admin:traffic_report")
+    builder.button(text="📊 Трафик (сегодня/вчера/месяц)", callback_data="admin:traffic_report")
     builder.button(text="📢 Рассылка", callback_data="admin:broadcast")
     builder.button(text="🧹 Очистка истекших", callback_data="admin:cleanup")
     builder.adjust(1)

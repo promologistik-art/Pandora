@@ -1407,18 +1407,21 @@ async def server_status(callback: types.CallbackQuery):
 
 
 # ========================
-# ОТЧЕТ ПО ТРАФИКУ (В РЕАЛЬНОМ ВРЕМЕНИ)
+# ОТЧЕТ ПО ТРАФИКУ
 # ========================
 
 @router.callback_query(F.data == "admin:traffic_report")
 async def traffic_report(callback: types.CallbackQuery):
-    """Показывает отчет по трафику за сегодня и вчера в реальном времени из 3x-ui."""
+    """Показывает отчет по трафику за сегодня, вчера и с начала месяца."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
+    await callback.message.answer("⏳ Собираю данные по трафику...")
+    
     today = date.today()
     yesterday = today - timedelta(days=1)
+    month_start = today.replace(day=1)
     
     # Получаем всех активных клиентов
     async with async_session() as session:
@@ -1432,15 +1435,41 @@ async def traffic_report(callback: types.CallbackQuery):
         clients = result.scalars().all()
     
     if not clients:
-        await callback.message.answer("📭 Нет активных клиентов.")
+        await callback.message.edit_text("📭 Нет активных клиентов.")
         await callback.answer()
         return
     
-    # Собираем трафик в реальном времени из 3x-ui
-    total_up = 0
-    total_down = 0
+    # Получаем трафик из TrafficLog за вчера и за месяц
+    async with async_session() as session:
+        # Трафик за вчера
+        traffic_yesterday = await session.execute(
+            select(
+                func.sum(TrafficLog.upload_bytes).label("upload"),
+                func.sum(TrafficLog.download_bytes).label("download")
+            )
+            .where(TrafficLog.date == yesterday)
+        )
+        data_yesterday = traffic_yesterday.one()
+        upload_yesterday = data_yesterday.upload or 0
+        download_yesterday = data_yesterday.download or 0
+        
+        # Трафик с начала месяца
+        traffic_month = await session.execute(
+            select(
+                func.sum(TrafficLog.upload_bytes).label("upload"),
+                func.sum(TrafficLog.download_bytes).label("download")
+            )
+            .where(TrafficLog.date >= month_start)
+        )
+        data_month = traffic_month.one()
+        upload_month = data_month.upload or 0
+        download_month = data_month.download or 0
     
-    # Для топа по клиентам
+    # Собираем трафик за сегодня (общий накопленный) из 3x-ui
+    total_up_today = 0
+    total_down_today = 0
+    
+    # Для топа по клиентам (общий трафик)
     client_traffic = {}
     
     for client in clients:
@@ -1451,8 +1480,8 @@ async def traffic_report(callback: types.CallbackQuery):
                 up = client_data.get("up", 0)
                 down = client_data.get("down", 0)
                 
-                total_up += up
-                total_down += down
+                total_up_today += up
+                total_down_today += down
                 
                 client_traffic[client.id] = {
                     "username": client.username or client.first_name or f"ID {client.id}",
@@ -1463,7 +1492,7 @@ async def traffic_report(callback: types.CallbackQuery):
         except Exception as e:
             logger.error(f"Ошибка получения трафика для client_{client.id}: {e}")
     
-    # Топ-5 клиентов по трафику
+    # Топ-5 клиентов по трафику (общий за всё время)
     top_clients = sorted(
         client_traffic.values(),
         key=lambda x: x["total"],
@@ -1480,20 +1509,49 @@ async def traffic_report(callback: types.CallbackQuery):
             i += 1
         return f"{bytes_value:.2f} {units[i]}"
 
+    # Определяем, есть ли данные за сегодня в TrafficLog
+    async with async_session() as session:
+        traffic_today_log = await session.execute(
+            select(
+                func.sum(TrafficLog.upload_bytes).label("upload"),
+                func.sum(TrafficLog.download_bytes).label("download")
+            )
+            .where(TrafficLog.date == today)
+        )
+        data_today_log = traffic_today_log.one()
+        has_today_data = (data_today_log.upload or 0) > 0 or (data_today_log.download or 0) > 0
+
     report_lines = [
-        "<b>📊 Отчет по трафику (в реальном времени)</b>",
+        "<b>📊 Отчет по трафику</b>",
         "",
-        f"<b>📅 Всего (за всё время):</b>",
-        f"  • Upload: {format_bytes(total_up)}",
-        f"  • Download: {format_bytes(total_down)}",
-        f"  • Всего: {format_bytes(total_up + total_down)}",
-        "",
-        "<i>⚠️ Данные показывают общий трафик клиентов (без разбивки по дням)</i>",
-        "",
+        f"<b>📅 Сегодня ({today.strftime('%d.%m.%Y')}):</b>",
     ]
+    
+    if has_today_data:
+        report_lines.append(f"  • Upload: {format_bytes(data_today_log.upload or 0)}")
+        report_lines.append(f"  • Download: {format_bytes(data_today_log.download or 0)}")
+        report_lines.append(f"  • Всего: {format_bytes((data_today_log.upload or 0) + (data_today_log.download or 0))}")
+    else:
+        report_lines.append("  ⏳ Данные за сегодня будут собраны завтра в 3:00")
+    
+    report_lines.extend([
+        "",
+        f"<b>📅 Вчера ({yesterday.strftime('%d.%m.%Y')}):</b>",
+        f"  • Upload: {format_bytes(upload_yesterday)}",
+        f"  • Download: {format_bytes(download_yesterday)}",
+        f"  • Всего: {format_bytes(upload_yesterday + download_yesterday)}",
+        "",
+        f"<b>📅 С начала месяца ({month_start.strftime('%d.%m.%Y')}):</b>",
+        f"  • Upload: {format_bytes(upload_month)}",
+        f"  • Download: {format_bytes(download_month)}",
+        f"  • Всего: {format_bytes(upload_month + download_month)}",
+        "",
+        "<i>⚠️ Данные за сегодня и вчера — из ежедневного сбора в 3:00</i>",
+        "",
+    ])
 
     if top_clients:
-        report_lines.append("<b>🏆 Топ-5 клиентов по трафику:</b>")
+        report_lines.append("<b>🏆 Топ-5 клиентов по трафику (всего):</b>")
         for i, client in enumerate(top_clients, 1):
             report_lines.append(f"  {i}. {client['username']} — {format_bytes(client['total'])}")
     else:
@@ -1501,7 +1559,7 @@ async def traffic_report(callback: types.CallbackQuery):
 
     report = "\n".join(report_lines)
 
-    await callback.message.answer(report)
+    await callback.message.edit_text(report)
     await callback.answer()
 
 
