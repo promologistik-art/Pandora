@@ -96,9 +96,8 @@ async def collect_traffic():
                 continue
             
             try:
-                data = await xray._api_get(
-                    f"/panel/api/inbounds/getClient/{config.XUI_INBOUND_ID}/{sub.xray_uuid}"
-                )
+                # Используем /clients/traffic/{email} для получения трафика
+                data = await xray._api_get(f"/panel/api/clients/traffic/client_{client.id}")
                 if data and data.get("success"):
                     client_data = data.get("obj", {})
                     up = client_data.get("up", 0)
@@ -126,6 +125,7 @@ async def collect_traffic():
                         session.add(log)
                     
                     count += 1
+                    logger.info(f"✅ Трафик для client_{client.id}: up={up}, down={down}")
             except Exception as e:
                 logger.error(f"Ошибка получения трафика для клиента {client.id}: {e}")
         
@@ -262,8 +262,6 @@ async def check_expiring_subscriptions(bot: Bot):
         # ========================================
         # 5. ПРОВЕРКА ЗА 12 ЧАСОВ (триалы и платные подписки)
         # ========================================
-        # Проверяем подписки, которые истекают сегодня вечером
-        # Запускается в 12:00, поэтому проверяем подписки с expires_at == today
         result = await session.execute(
             select(Subscription)
             .where(Subscription.status == "active")
@@ -274,7 +272,6 @@ async def check_expiring_subscriptions(bot: Bot):
         for sub in subs_today_12h:
             client = await session.get(Client, sub.client_id)
             if client:
-                # Проверяем, не истекла ли уже подписка (на случай если проверка запустилась позже)
                 if sub.expires_at < today:
                     continue
                     
@@ -306,8 +303,6 @@ async def check_expiring_subscriptions(bot: Bot):
         # ========================================
         # 6. ПОДПИСКИ, ИСТЕКАЮЩИЕ СЕГОДНЯ (деактивация в 23:59)
         # ========================================
-        # Эта проверка запускается в 23:30, чтобы деактивировать подписки в конце дня
-        # Используем отдельную проверку, чтобы не дублировать с 12-часовой
         result = await session.execute(
             select(Subscription)
             .where(Subscription.status == "active")
@@ -318,7 +313,6 @@ async def check_expiring_subscriptions(bot: Bot):
         for sub in subs_today:
             client = await session.get(Client, sub.client_id)
             if client:
-                # Проверяем, есть ли у клиента ДРУГАЯ активная подписка
                 other_active = await session.execute(
                     select(Subscription)
                     .where(Subscription.client_id == client.id)
@@ -327,17 +321,16 @@ async def check_expiring_subscriptions(bot: Bot):
                     .where(Subscription.id != sub.id)
                 )
                 if other_active.scalar_one_or_none():
-                    # Если есть другая активная подписка — просто деактивируем старую, не уведомляя
                     sub.status = "expired"
                     await session.commit()
                     logger.info(f"Подписка {sub.id} для клиента {client.id} деактивирована (есть другая активная подписка)")
                     continue
                 
-                # Нет другой подписки — отправляем уведомление
                 sub.status = "expired"
                 await session.commit()
 
-                await xray.remove_client(sub.xray_uuid)
+                if sub.xray_uuid:
+                    await xray.remove_client(sub.xray_uuid)
 
                 event = EventLog(
                     client_id=client.id,
@@ -560,16 +553,16 @@ async def start_scheduler(bot: Bot):
     # 4. Напоминания об истечении — в 9:00 МСК
     scheduler.add_job(
         check_expiring_subscriptions,
-        CronTrigger(hour=5, minute=0),  # 8:00 МСК (5:00 UTC)
+        CronTrigger(hour=5, minute=0),
         args=[bot],
         id="check_expiring",
         replace_existing=True,
     )
 
-    # 5. Напоминания за 12 часов — в 12:00 МСК (для подписок, истекающих сегодня)
+    # 5. Напоминания за 12 часов — в 12:00 МСК
     scheduler.add_job(
         check_expiring_subscriptions,
-        CronTrigger(hour=9, minute=0),  # 12:00 МСК (9:00 UTC)
+        CronTrigger(hour=9, minute=0),
         args=[bot],
         id="check_expiring_12h",
         replace_existing=True,
@@ -578,7 +571,7 @@ async def start_scheduler(bot: Bot):
     # 6. Деактивация истекших подписок — в 23:30 МСК
     scheduler.add_job(
         check_expiring_subscriptions,
-        CronTrigger(hour=20, minute=30),  # 23:30 МСК (20:30 UTC)
+        CronTrigger(hour=20, minute=30),
         args=[bot],
         id="check_expiring_deactivate",
         replace_existing=True,
@@ -587,7 +580,7 @@ async def start_scheduler(bot: Bot):
     # 7. Ежедневная сводка — в 8:00 МСК
     scheduler.add_job(
         daily_report,
-        CronTrigger(hour=4, minute=0),  # 7:00 МСК (4:00 UTC)
+        CronTrigger(hour=4, minute=0),
         args=[bot],
         id="daily_report",
         replace_existing=True,
