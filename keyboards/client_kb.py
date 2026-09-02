@@ -60,7 +60,7 @@ def help_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="📥 Скачать приложения", callback_data="help:downloads")
     builder.button(text="📖 Инструкция", callback_data="help:instructions")
-    builder.button(text="🔄 Настройка Happ (обход белых списков)", callback_data="help:happ_bypass")
+    builder.button(text="🔄 Настройка Happ", callback_data="help:happ_bypass")
     builder.button(text="📞 Связаться с поддержкой", url=f"https://t.me/{config.SUPPORT_BOT_USERNAME}")
     builder.adjust(1)
     return builder.as_markup()

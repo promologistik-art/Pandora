@@ -282,10 +282,13 @@ async def cmd_start(message: types.Message, state: FSMContext):
     # 5. ПРИВЕТСТВИЕ
     # ========================================
     welcome = (
-        "<b>📦 Ящик Пандоры</b> — стабильный VPN с умной маршрутизацией.\n"
-        "Заблокированные сайты работают, белые списки не тормозят.\n\n"
-        "<i>Нет доступа к Telegram?</i> Инструкции и поддержка ВКонтакте:\n"
-        f"{config.VK_PAGE}"
+        "Привет! Это бот сервиса «Ящик Пандоры».\n\n"
+        "Здесь можно получить код активации для быстрого и стабильного доступа к сайтам и приложениям.\n\n"
+        "✅ Быстрая загрузка видео\n"
+        "✅ Instagram, YouTube, Telegram — без ограничений\n"
+        "✅ Один ключ — до 5 устройств\n\n"
+        "ℹ️ Ключ активации — это цифровой товар.\n"
+        "Вы получаете доступ к серверу для ускорения работы с сетевыми ресурсами."
     )
 
     if is_admin(message.from_user.id):
@@ -396,7 +399,6 @@ async def trial_start(callback: types.CallbackQuery):
                 await session.commit()
                 logger.info(f"✅ Сохранён UUID из 3x-ui: {real_uuid}")
             
-            # Генерируем ссылку
             link = await xray.get_client_link(f"client_{client.id}")
             if link:
                 sub.sub_link = link
@@ -405,7 +407,6 @@ async def trial_start(callback: types.CallbackQuery):
             else:
                 logger.warning("⚠️ Триальная ссылка не получена")
         else:
-            # Если не удалось создать клиента — используем SUB_LINKS (как резерв)
             link = await get_free_sub_link(session)
             if link:
                 sub.sub_link = link
@@ -420,7 +421,6 @@ async def trial_start(callback: types.CallbackQuery):
         session.add(event)
         await session.commit()
 
-    # ✅ ПОКАЗЫВАЕМ ССЫЛКУ
     await callback.message.answer(
         f"<b>🎉 Триал-доступ активирован на {config.TRIAL_DAYS} дня!</b>\n\n"
         f"<b>Ваша ссылка:</b>\n"
@@ -470,7 +470,6 @@ async def show_status(message: types.Message):
     sub = await get_active_subscription(client.id)
 
     if sub is None:
-        # Проверяем, был ли у юзера уже триал
         async with async_session() as session:
             used_trial = await session.execute(
                 select(Subscription)
@@ -496,7 +495,6 @@ async def show_status(message: types.Message):
     days_left = (sub.expires_at - date.today()).days
     trial_text = " (триал)" if sub.is_trial else ""
     
-    # Ссылка уже сохранена в БД при создании
     link = sub.sub_link or await xray.get_client_link(f"client_{client.id}") or "не указана"
 
     await message.answer(
@@ -535,14 +533,13 @@ async def cmd_help_command(message: types.Message):
 
 
 async def show_help(message: types.Message):
-    """Показывает помощь с инструкцией по Happ."""
     text = (
         "<b>🆘 Помощь и FAQ</b>\n\n"
         "<b>Частые вопросы:</b>\n"
         "• Не работает YouTube — попробуйте переподключиться\n"
-        "• Медленная скорость — проверьте сервер в статусе\n"
+        "• Медленная скорость — проверьте статус в боте\n"
         "• Как установить на устройство — см. инструкции ниже\n"
-        "• Российские сервисы просят выключить VPN — см. настройку Happ\n\n"
+        "• Российские сервисы просят отключить доступ — см. настройку Happ\n\n"
         f"<b>Поддержка:</b> @{config.SUPPORT_BOT_USERNAME}\n"
         f"<b>ВКонтакте:</b> {config.VK_PAGE}"
     )
@@ -551,18 +548,15 @@ async def show_help(message: types.Message):
 
 @router.callback_query(F.data == "help:happ_bypass")
 async def happ_bypass_instructions(callback: types.CallbackQuery):
-    """Инструкция по настройке Happ для обхода белых списков."""
     text = (
-        "📖 <b>Настройка Happ для обхода белых списков</b>\n\n"
-        "Некоторые приложения в нашей великой стране при запуске спрашивают у смартфона: "
-        "<i>«ВПН включен?»</i> Если Да, то приложение, например ВК, выдает сообщение "
-        "<i>«Выключите впн»</i>.\n\n"
-        "Как этого избежать?\n\n"
+        "📖 <b>Настройка Happ</b>\n\n"
+        "Некоторые приложения при запуске проверяют наличие активного доступа и просят его отключить.\n\n"
+        "Как это обойти:\n\n"
         "1️⃣ Откройте приложение Happ на смартфоне\n"
         "2️⃣ Нажмите на шестерёнку ⚙️ в левом верхнем углу\n"
         "3️⃣ Выберите <b>«Прокси для выбранных приложений»</b>\n"
         "4️⃣ Выберите режим <b>«Обход»</b> (Bypass)\n"
-        "5️⃣ Отметьте галочками ✅ российские сервисы, которые должны работать напрямую:\n"
+        "5️⃣ Отметьте галочками ✅ приложения, которые должны работать напрямую:\n"
         "   • 2ГИС\n"
         "   • Авито\n"
         "   • билайн\n"
@@ -574,21 +568,17 @@ async def happ_bypass_instructions(callback: types.CallbackQuery):
         "   • Магнит Доставка\n"
         "   • и другие нужные вам приложения\n\n"
         "📌 <b>Как это работает:</b>\n"
-        "• Отмеченные приложения <b>НЕ ИСПОЛЬЗУЮТ</b> VPN и подключаются напрямую\n"
-        "• Все остальные приложения работают через VPN\n\n"
-        "💡 <b>Важно:</b> Если банковское приложение или госуслуги не работают через VPN - "
-        "добавьте их в список обхода.\n\n"
-        "⏱ <b>2 минуты</b> - и все российские сервисы доступны."
+        "• Отмеченные приложения работают напрямую\n"
+        "• Все остальные — через сервер\n\n"
+        "💡 <b>Важно:</b> Если банковское приложение или госуслуги не работают, добавьте их в список обхода.\n\n"
+        "⏱ <b>2 минуты</b> — и всё работает."
     )
-    
-    # Отправляем текст
     await callback.message.answer(text)
     await callback.answer()
 
 
 @router.callback_query(F.data == "help:instructions")
 async def send_instructions(callback: types.CallbackQuery):
-    """Инструкция по установке."""
     await callback.message.answer(
         "<b>📖 Инструкция по установке</b>\n\n"
         "1. Скачайте приложение Happ\n"
@@ -723,7 +713,6 @@ async def tariff_selected(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Тариф не найден")
         return
 
-    # ✅ Сохраняем выбранный тариф в FSM
     await state.update_data(
         selected_tariff=tariff_key,
         selected_tariff_name=tariff['name'],
@@ -764,12 +753,10 @@ async def payment_confirm(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    # ✅ Получаем выбранный тариф из FSM
     data = await state.get_data()
     tariff_name = data.get("selected_tariff_name", "1 месяц")
     tariff_price = data.get("selected_tariff_price", 300)
 
-    # ✅ Сохраняем тариф в временные данные для последующего использования
     await state.update_data(
         pending_tariff_name=tariff_name,
         pending_tariff_price=tariff_price
@@ -797,7 +784,6 @@ async def payment_phone_digits(message: types.Message, state: FSMContext):
         )
         return
 
-    # ✅ Получаем тариф из FSM
     data = await state.get_data()
     tariff_name = data.get("pending_tariff_name", "1 месяц")
     tariff_price = data.get("pending_tariff_price", 300)
@@ -817,7 +803,6 @@ async def payment_phone_digits(message: types.Message, state: FSMContext):
         await session.commit()
         payment_id = payment.id
 
-    # ✅ УВЕДОМЛЕНИЕ АДМИНА С ТАРИФОМ
     for admin_id in config.ADMIN_IDS:
         try:
             await message.bot.send_message(
@@ -832,7 +817,6 @@ async def payment_phone_digits(message: types.Message, state: FSMContext):
         except Exception as e:
             logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
 
-    # ✅ Очищаем FSM после использования
     await state.clear()
 
     await message.answer(
@@ -856,7 +840,6 @@ async def payment_screenshot(message: types.Message, state: FSMContext):
         )
         return
 
-    # ✅ Получаем тариф из FSM
     data = await state.get_data()
     tariff_name = data.get("pending_tariff_name", "1 месяц")
     tariff_price = data.get("pending_tariff_price", 300)
@@ -876,7 +859,6 @@ async def payment_screenshot(message: types.Message, state: FSMContext):
         await session.commit()
         payment_id = payment.id
 
-    # ✅ УВЕДОМЛЕНИЕ АДМИНА С ТАРИФОМ
     for admin_id in config.ADMIN_IDS:
         try:
             await message.bot.send_photo(
@@ -893,7 +875,6 @@ async def payment_screenshot(message: types.Message, state: FSMContext):
         except Exception as e:
             logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
 
-    # ✅ Очищаем FSM после использования
     await state.clear()
 
     await message.answer(

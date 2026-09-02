@@ -889,6 +889,17 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
     await callback.message.edit_text(
         f"✅ Подписка @{client.username or client.first_name} продлена до {sub.expires_at.strftime('%d.%m.%Y')}."
     )
+    
+    # Уведомление клиента
+    try:
+        await callback.bot.send_message(
+            client.telegram_id,
+            f"✅ <b>Ваш ключ активации продлён до {sub.expires_at.strftime('%d.%m.%Y')}.</b>\n\n"
+            f"Доступ к серверу сохранён."
+        )
+    except Exception as e:
+        logger.error(f"Не удалось уведомить клиента {client.id}: {e}")
+    
     await callback.answer()
 
 
@@ -1024,7 +1035,7 @@ async def delete_subscription_final(callback: types.CallbackQuery):
         try:
             await callback.bot.send_message(
                 client.telegram_id,
-                f"❌ <b>Ваша подписка удалена администратором.</b>\n\n"
+                f"❌ <b>Ваш ключ активации удалён администратором.</b>\n\n"
                 f"Свяжитесь с поддержкой: @{config.SUPPORT_BOT_USERNAME}"
             )
         except Exception as e:
@@ -1423,7 +1434,6 @@ async def traffic_report(callback: types.CallbackQuery):
     yesterday = today - timedelta(days=1)
     month_start = today.replace(day=1)
     
-    # Получаем всех активных клиентов
     async with async_session() as session:
         result = await session.execute(
             select(Client)
@@ -1439,9 +1449,7 @@ async def traffic_report(callback: types.CallbackQuery):
         await callback.answer()
         return
     
-    # Получаем трафик из TrafficLog за вчера и за месяц
     async with async_session() as session:
-        # Трафик за вчера
         traffic_yesterday = await session.execute(
             select(
                 func.sum(TrafficLog.upload_bytes).label("upload"),
@@ -1453,7 +1461,6 @@ async def traffic_report(callback: types.CallbackQuery):
         upload_yesterday = data_yesterday.upload or 0
         download_yesterday = data_yesterday.download or 0
         
-        # Трафик с начала месяца
         traffic_month = await session.execute(
             select(
                 func.sum(TrafficLog.upload_bytes).label("upload"),
@@ -1465,11 +1472,8 @@ async def traffic_report(callback: types.CallbackQuery):
         upload_month = data_month.upload or 0
         download_month = data_month.download or 0
     
-    # Собираем трафик за сегодня (общий накопленный) из 3x-ui
     total_up_today = 0
     total_down_today = 0
-    
-    # Для топа по клиентам (общий трафик)
     client_traffic = {}
     
     for client in clients:
@@ -1492,7 +1496,6 @@ async def traffic_report(callback: types.CallbackQuery):
         except Exception as e:
             logger.error(f"Ошибка получения трафика для client_{client.id}: {e}")
     
-    # Топ-5 клиентов по трафику (общий за всё время)
     top_clients = sorted(
         client_traffic.values(),
         key=lambda x: x["total"],
@@ -1509,7 +1512,6 @@ async def traffic_report(callback: types.CallbackQuery):
             i += 1
         return f"{bytes_value:.2f} {units[i]}"
 
-    # Определяем, есть ли данные за сегодня в TrafficLog
     async with async_session() as session:
         traffic_today_log = await session.execute(
             select(
@@ -1787,7 +1789,7 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                     logger.info(f"✅ Новая ссылка для клиента {client.id}: {new_link}")
 
         # ========================================
-        # РЕФЕРАЛЬНАЯ ПРОГРАММА (ТОЛЬКО ПРИ ПЕРВОЙ ОПЛАТЕ)
+        # РЕФЕРАЛЬНАЯ ПРОГРАММА
         # ========================================
         if client.referrer_id:
             existing_referral = await session.execute(
@@ -1816,7 +1818,7 @@ async def payment_confirm_final(callback: types.CallbackQuery):
                                 referrer_client.telegram_id,
                                 f"🎉 <b>Ваш друг @{client.username or client.first_name} активировал подписку!</b>\n\n"
                                 f"Вам начислено <b>{config.REFERRAL_BONUS_DAYS} дней</b> бесплатного доступа.\n"
-                                f"Теперь ваша подписка действует до {referrer_sub.expires_at.strftime('%d.%m.%Y')}."
+                                f"Теперь ваш ключ действует до {referrer_sub.expires_at.strftime('%d.%m.%Y')}."
                             )
                     except Exception as e:
                         logger.error(f"Не удалось уведомить реферера {client.referrer_id}: {e}")
@@ -1838,7 +1840,7 @@ async def payment_confirm_final(callback: types.CallbackQuery):
         message_text = (
             f"<b>✅ Оплата подтверждена!</b>\n\n"
             f"<b>Тариф:</b> {tariff['name']}\n"
-            f"<b>Подписка до:</b> {sub.expires_at.strftime('%d.%m.%Y')}\n\n"
+            f"<b>Ключ активации действует до:</b> {sub.expires_at.strftime('%d.%m.%Y')}\n\n"
             f"<b>Ваша ссылка:</b>\n"
             f"<code>{link}</code>\n\n"
             f"<b>Поддержка:</b> @{config.SUPPORT_BOT_USERNAME}"

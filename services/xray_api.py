@@ -121,16 +121,10 @@ class XRayAPI:
     async def add_client(self, email: str, expiry_days: int = 30) -> dict | None:
         """
         Создаёт клиента через /clients/add с указанием inboundIds.
-        
-        Генерирует все необходимые поля на стороне бота:
-        - id (UUID)
-        - subId = email (ID подписки)
-        - password (случайный пароль)
-        - auth (Hysteria Auth)
+        Генерирует все необходимые поля на стороне бота.
         """
         logger.info(f"3x-ui: создание клиента {email}, срок {expiry_days} дней")
         
-        # 1. Получаем все активные inbound'ы
         active_inbounds = await self._get_active_inbounds()
         if not active_inbounds:
             logger.error("3x-ui: нет активных inbound'ов")
@@ -139,25 +133,22 @@ class XRayAPI:
         inbound_ids = [inb.get("id") for inb in active_inbounds]
         logger.info(f"3x-ui: привязываем клиента к inbound'ам: {inbound_ids}")
         
-        # 2. Генерируем все необходимые поля
         client_uuid = str(uuid.uuid4())
         client_password = self._generate_password()
         client_auth = self._generate_auth()
         
-        # 3. Вычисляем expiryTime (в миллисекундах)
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
         logger.info(f"3x-ui: expiryTime = {expiry_time} ({expiry_days} дней)")
         
-        # 4. Формируем payload ТОЧНО как в панели при создании через интерфейс
         client_payload = {
             "email": email,
-            "subId": email,                    # ID подписки = email
-            "id": client_uuid,                 # UUID (генерируем сами)
-            "password": client_password,       # Пароль (генерируем сами)
-            "auth": client_auth,               # Hysteria Auth (генерируем сами)
+            "subId": email,
+            "id": client_uuid,
+            "password": client_password,
+            "auth": client_auth,
             "enable": True,
             "expiryTime": expiry_time,
-            "limitIp": 3,
+            "limitIp": config.LIMIT_IP,  # ✅ 5 устройств
             "totalGB": 0,
             "comment": "",
             "group": "",
@@ -192,12 +183,9 @@ class XRayAPI:
         return None
 
     async def update_client_expiry(self, email: str, expiry_days: int) -> bool:
-        """
-        Обновляет срок клиента через /clients/update/{email}.
-        """
+        """Обновляет срок клиента через /clients/update/{email}."""
         logger.info(f"3x-ui: обновление срока для {email} до {expiry_days} дней")
         
-        # 1. Получаем текущего клиента
         client = await self._get_client_by_email(email)
         if not client:
             logger.error(f"3x-ui: клиент {email} не найден")
@@ -205,7 +193,6 @@ class XRayAPI:
         
         expiry_time = int((datetime.utcnow() + timedelta(days=expiry_days)).timestamp() * 1000)
         
-        # 2. Обновляем клиента (сохраняя все остальные поля)
         payload = {
             "email": email,
             "subId": client.get("subId", email),
@@ -214,7 +201,7 @@ class XRayAPI:
             "auth": client.get("auth", ""),
             "enable": client.get("enable", True),
             "expiryTime": expiry_time,
-            "limitIp": client.get("limitIp", 3),
+            "limitIp": config.LIMIT_IP,  # ✅ 5 устройств
             "totalGB": client.get("totalGB", 0),
             "comment": client.get("comment", ""),
             "group": client.get("group", ""),
@@ -240,9 +227,7 @@ class XRayAPI:
         return False
 
     async def get_client_link(self, email: str) -> str | None:
-        """
-        Генерирует ссылку для подключения клиента.
-        """
+        """Генерирует ссылку для подключения клиента."""
         try:
             if config.SUB_LINKS and len(config.SUB_LINKS) > 0:
                 template = config.SUB_LINKS[0]
@@ -259,12 +244,9 @@ class XRayAPI:
             return None
 
     async def remove_client(self, client_id: str) -> bool:
-        """
-        Удаляет клиента по email.
-        """
+        """Удаляет клиента по email."""
         logger.info(f"3x-ui: удаление клиента {client_id}")
         
-        # Проверяем, является ли client_id UUID
         is_uuid = bool(re.match(
             r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
             client_id,
@@ -272,7 +254,6 @@ class XRayAPI:
         ))
         
         if is_uuid:
-            # Если это UUID, пробуем найти email
             inbounds = await self._get_active_inbounds()
             for inbound in inbounds:
                 settings = inbound.get("settings", {})
@@ -286,9 +267,7 @@ class XRayAPI:
             logger.error(f"3x-ui: ❌ клиент с UUID {client_id} не найден")
             return False
         
-        # Удаляем по email
         email = client_id
-        
         result = await self._api_post(f"/panel/api/clients/del/{email}")
         if result and result.get("success"):
             logger.info(f"3x-ui: ✅ клиент {email} удалён")

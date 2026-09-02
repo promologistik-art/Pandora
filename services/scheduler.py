@@ -96,7 +96,6 @@ async def collect_traffic():
                 continue
             
             try:
-                # Используем /clients/traffic/{email} для получения трафика
                 data = await xray._api_get(f"/panel/api/clients/traffic/client_{client.id}")
                 if data and data.get("success"):
                     client_data = data.get("obj", {})
@@ -160,9 +159,9 @@ async def check_expiring_subscriptions(bot: Bot):
                 try:
                     await bot.send_message(
                         client.telegram_id,
-                        f"<b>⏰ Ваша подписка истекает через {days_left} дней!</b>\n\n"
+                        f"<b>⏰ Ваш ключ активации истекает через {days_left} дней!</b>\n\n"
                         f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
-                        f"💳 Продлите подписку, чтобы не потерять доступ к VPN.\n\n"
+                        f"💳 Продлите ключ, чтобы сохранить доступ.\n\n"
                         f"Для продления нажмите «📊 Статус» → «💳 Продлить подписку»"
                     )
                 except Exception as e:
@@ -187,9 +186,9 @@ async def check_expiring_subscriptions(bot: Bot):
                 try:
                     await bot.send_message(
                         client.telegram_id,
-                        f"<b>⏰ Ваша подписка истекает через {days_left} дня!</b>\n\n"
+                        f"<b>⏰ Ваш ключ активации истекает через {days_left} дня!</b>\n\n"
                         f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
-                        f"💳 Продлите подписку, чтобы не потерять доступ к VPN.\n\n"
+                        f"💳 Продлите ключ, чтобы сохранить доступ.\n\n"
                         f"Для продления нажмите «📊 Статус» → «💳 Продлить подписку»"
                     )
                 except Exception as e:
@@ -214,9 +213,9 @@ async def check_expiring_subscriptions(bot: Bot):
                 try:
                     await bot.send_message(
                         client.telegram_id,
-                        f"<b>⚠️ Ваша подписка истекает через {days_left} дня!</b>\n\n"
+                        f"<b>⚠️ Ваш ключ активации истекает через {days_left} дня!</b>\n\n"
                         f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
-                        f"⚡️ Осталось всего 2 дня! Продлите подписку сейчас.\n\n"
+                        f"⚡️ Осталось всего 2 дня! Продлите ключ сейчас.\n\n"
                         f"Для продления нажмите «📊 Статус» → «💳 Продлить подписку»"
                     )
                 except Exception as e:
@@ -240,9 +239,9 @@ async def check_expiring_subscriptions(bot: Bot):
                     try:
                         await bot.send_message(
                             client.telegram_id,
-                            f"<b>⏰ Ваш триал заканчивается завтра!</b>\n\n"
+                            f"<b>⏰ Ваш пробный период заканчивается завтра!</b>\n\n"
                             f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
-                            f"💳 Выберите тариф, чтобы продолжить пользоваться VPN.\n\n"
+                            f"💳 Выберите тариф, чтобы продолжить пользоваться сервисом.\n\n"
                             f"Для выбора тарифа нажмите «📊 Статус» → «💳 Продлить подписку»"
                         )
                     except Exception as e:
@@ -251,9 +250,9 @@ async def check_expiring_subscriptions(bot: Bot):
                     try:
                         await bot.send_message(
                             client.telegram_id,
-                            f"<b>⏰ Ваша подписка истекает завтра!</b>\n\n"
+                            f"<b>⏰ Ваш ключ активации истекает завтра!</b>\n\n"
                             f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
-                            f"⚡️ Срочно продлите подписку, чтобы не потерять доступ.\n\n"
+                            f"⚡️ Срочно продлите ключ, чтобы не потерять доступ.\n\n"
                             f"Для продления нажмите «📊 Статус» → «💳 Продлить подписку»"
                         )
                     except Exception as e:
@@ -279,10 +278,10 @@ async def check_expiring_subscriptions(bot: Bot):
                     try:
                         await bot.send_message(
                             client.telegram_id,
-                            f"<b>⚠️ Ваш триал истекает сегодня в 23:59!</b>\n\n"
+                            f"<b>⚠️ Ваш пробный период истекает сегодня в 23:59!</b>\n\n"
                             f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
                             f"⏳ Осталось меньше 12 часов!\n"
-                            f"💳 Продлите подписку, чтобы не потерять доступ.\n\n"
+                            f"💳 Продлите ключ, чтобы не потерять доступ.\n\n"
                             f"Для продления нажмите «📊 Статус» → «💳 Продлить подписку»"
                         )
                     except Exception as e:
@@ -291,10 +290,10 @@ async def check_expiring_subscriptions(bot: Bot):
                     try:
                         await bot.send_message(
                             client.telegram_id,
-                            f"<b>⚠️ Ваша подписка истекает сегодня в 23:59!</b>\n\n"
+                            f"<b>⚠️ Ваш ключ активации истекает сегодня в 23:59!</b>\n\n"
                             f"📅 Дата истечения: {sub.expires_at.strftime('%d.%m.%Y')}\n"
                             f"⏳ Осталось меньше 12 часов!\n"
-                            f"💳 Срочно продлите подписку!\n\n"
+                            f"💳 Срочно продлите ключ!\n\n"
                             f"Для продления нажмите «📊 Статус» → «💳 Продлить подписку»"
                         )
                     except Exception as e:
@@ -343,7 +342,7 @@ async def check_expiring_subscriptions(bot: Bot):
                 try:
                     await bot.send_message(
                         client.telegram_id,
-                        "<b>❌ Ваша подписка истекла.</b>\n\n"
+                        "<b>❌ Ваш ключ активации истёк.</b>\n\n"
                         "Доступ приостановлен.\n"
                         "Оплатите, чтобы возобновить.\n\n"
                         "Для оплаты нажмите «📊 Статус» → «💳 Продлить подписку»"
@@ -380,46 +379,46 @@ async def daily_report(bot: Bot):
         # ========================================
         # 1. КЛИЕНТЫ
         # ========================================
-        # Новые клиенты за вчера
         new_clients = await session.scalar(
             select(func.count(Client.id))
             .where(func.date(Client.created_at) == yesterday)
         )
+        logger.info(f"Новых клиентов за вчера: {new_clients or 0}")
 
-        # Всего клиентов
         total_clients = await session.scalar(select(func.count(Client.id)))
+        logger.info(f"Всего клиентов: {total_clients or 0}")
 
-        # Активных клиентов (с активной подпиской)
         active_clients = await session.scalar(
             select(func.count(func.distinct(Subscription.client_id)))
             .where(Subscription.status == "active")
             .where(Subscription.expires_at >= today)
         )
+        logger.info(f"Активных подписок: {active_clients or 0}")
 
-        # Истекло за вчера
         expired_yesterday = await session.scalar(
             select(func.count(Subscription.id))
             .where(Subscription.status == "expired")
             .where(Subscription.expires_at == yesterday)
         )
+        logger.info(f"Истекло за вчера: {expired_yesterday or 0}")
 
         # ========================================
         # 2. ФИНАНСЫ
         # ========================================
-        # Выручка за день
         payments_day = await session.scalar(
             select(func.sum(Payment.amount))
             .where(Payment.status == "confirmed")
             .where(func.date(Payment.confirmed_at) == yesterday)
         )
+        logger.info(f"Выручка за день: {payments_day or 0} руб.")
 
-        # Выручка за календарный месяц
         month_start = today.replace(day=1)
         payments_month = await session.scalar(
             select(func.sum(Payment.amount))
             .where(Payment.status == "confirmed")
             .where(Payment.confirmed_at >= month_start)
         )
+        logger.info(f"Выручка за месяц: {payments_month or 0} руб.")
 
         # ========================================
         # 3. ТРАФИК ЗА ВЧЕРА
@@ -434,6 +433,7 @@ async def daily_report(bot: Bot):
         traffic_data = traffic.one()
         upload_bytes = traffic_data.upload or 0
         download_bytes = traffic_data.download or 0
+        logger.info(f"Трафик за вчера: upload={upload_bytes}, download={download_bytes}")
 
         # ========================================
         # 4. КЛИЕНТЫ, ИСТЕКАЮЩИЕ ЗАВТРА
@@ -445,6 +445,7 @@ async def daily_report(bot: Bot):
             .where(Subscription.expires_at == tomorrow)
         )
         expiring_list = expiring_tomorrow.all()
+        logger.info(f"Истекает завтра: {len(expiring_list)} клиентов")
 
     # ========================================
     # 5. ФОРМИРУЕМ ОТЧЁТ
@@ -482,7 +483,6 @@ async def daily_report(bot: Bot):
 
     report = "\n".join(report_lines)
 
-    # Отправляем админам
     for admin_id in config.ADMIN_IDS:
         try:
             await bot.send_message(admin_id, report)
@@ -525,7 +525,6 @@ async def monitor_server(bot: Bot):
 # ============================================================
 
 async def start_scheduler(bot: Bot):
-    # 1. Очистка orphan-клиентов — каждый день в 3:30 ночи
     scheduler.add_job(
         cleanup_orphan_clients,
         CronTrigger(hour=3, minute=30),
@@ -533,7 +532,6 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 2. Очистка системы — 1-го числа каждого месяца в 2:30 ночи
     scheduler.add_job(
         full_cleanup,
         CronTrigger(day=1, hour=2, minute=30),
@@ -541,7 +539,6 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 3. Сбор трафика — в 3:00 (с повторными попытками)
     scheduler.add_job(
         collect_traffic_with_retry,
         CronTrigger(hour=3, minute=0),
@@ -550,7 +547,6 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 4. Напоминания об истечении — в 9:00 МСК
     scheduler.add_job(
         check_expiring_subscriptions,
         CronTrigger(hour=5, minute=0),
@@ -559,7 +555,6 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 5. Напоминания за 12 часов — в 12:00 МСК
     scheduler.add_job(
         check_expiring_subscriptions,
         CronTrigger(hour=9, minute=0),
@@ -568,7 +563,6 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 6. Деактивация истекших подписок — в 23:30 МСК
     scheduler.add_job(
         check_expiring_subscriptions,
         CronTrigger(hour=20, minute=30),
@@ -577,7 +571,6 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 7. Ежедневная сводка — в 8:00 МСК
     scheduler.add_job(
         daily_report,
         CronTrigger(hour=4, minute=0),
@@ -586,7 +579,6 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # 8. Мониторинг сервера — каждые 30 минут
     scheduler.add_job(
         monitor_server,
         IntervalTrigger(minutes=30),

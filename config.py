@@ -24,7 +24,7 @@ class Config:
     XUI_USERNAME: str = os.getenv("XUI_USERNAME", "")
     XUI_PASSWORD: str = os.getenv("XUI_PASSWORD", "")
     XUI_INBOUND_ID: int = int(os.getenv("XUI_INBOUND_ID", "1"))
-    XUI_API_TOKEN: str = os.getenv("XUI_API_TOKEN", "")   # <-- ДОБАВИТЬ ЭТУ СТРОКУ
+    XUI_API_TOKEN: str = os.getenv("XUI_API_TOKEN", "")
 
     # === СБП ===
     SBP_PHONE: str = os.getenv("SBP_PHONE", "+79991234567")
@@ -51,6 +51,8 @@ class Config:
 
     REFERRAL_BONUS_DAYS: int = int(os.getenv("REFERRAL_BONUS_DAYS", "7"))
 
+    # === Количество устройств ===
+    LIMIT_IP: int = int(os.getenv("LIMIT_IP", "5"))
+
 
 config = Config()
-
