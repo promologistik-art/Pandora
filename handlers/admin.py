@@ -12,7 +12,10 @@ from sqlalchemy import select, func, text
 
 from config import config
 from database.engine import async_session
-from database.models import Client, Subscription, Payment, EventLog, Referral, TrafficLog, Router
+from database.models import (
+    Client, Subscription, Payment, EventLog, Referral, TrafficLog,
+    Router as RouterModel
+)
 from services.client_service import (
     get_or_create_client, get_active_subscription,
     is_admin, get_free_sub_link
@@ -1580,10 +1583,8 @@ async def show_routers(callback: types.CallbackQuery):
     
     await callback.message.edit_text("⏳ Синхронизация роутеров...")
     
-    # Синхронизируем с API
     await sync_routers()
     
-    # Получаем роутеры из БД
     routers_db = await get_all_routers()
     
     if not routers_db:
@@ -1601,7 +1602,6 @@ async def show_routers(callback: types.CallbackQuery):
         await callback.answer()
         return
     
-    # Формируем список
     text = "<b>📡 Роутеры</b>\n\n"
     
     online_count = 0
@@ -1649,7 +1649,7 @@ async def show_router_detail(callback: types.CallbackQuery):
     
     async with async_session() as session:
         result = await session.execute(
-            select(Router).where(Router.router_uid == mac)
+            select(RouterModel).where(RouterModel.router_uid == mac)
         )
         router_obj = result.scalar_one_or_none()
     
