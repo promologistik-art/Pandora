@@ -28,7 +28,6 @@ class Migration:
                 )
             """
         },
-        # ✅ ИСПРАВЛЕНО: разбито на две отдельные миграции
         {
             "name": "drop_xray_uuid_default",
             "description": "Удаление DEFAULT у колонки xray_uuid в таблице subscriptions",
@@ -38,6 +37,21 @@ class Migration:
             "name": "drop_xray_uuid_not_null",
             "description": "Удаление NOT NULL у колонки xray_uuid в таблице subscriptions",
             "sql": "ALTER TABLE subscriptions ALTER COLUMN xray_uuid DROP NOT NULL"
+        },
+        {
+            "name": "add_email_to_routers",
+            "description": "Добавление колонки email в таблицу routers",
+            "sql": "ALTER TABLE routers ADD COLUMN IF NOT EXISTS email VARCHAR(255)"
+        },
+        {
+            "name": "add_firmware_version_to_routers",
+            "description": "Добавление колонки firmware_version в таблицу routers",
+            "sql": "ALTER TABLE routers ADD COLUMN IF NOT EXISTS firmware_version VARCHAR(20)"
+        },
+        {
+            "name": "add_last_ip_to_routers",
+            "description": "Добавление колонки last_ip в таблицу routers",
+            "sql": "ALTER TABLE routers ADD COLUMN IF NOT EXISTS last_ip VARCHAR(45)"
         },
     ]
     
@@ -50,7 +64,6 @@ class Migration:
                 await conn.execute(text(migration["sql"]))
                 logger.info(f"✅ {migration['name']} применена")
             except Exception as e:
-                # Если колонка уже существует или другие ошибки — логируем, но не прерываем
                 if "already exists" in str(e) or "does not exist" in str(e):
                     logger.warning(f"⚠️ {migration['name']} пропущена (уже применена или отсутствует): {e}")
                 else:

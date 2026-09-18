@@ -54,5 +54,9 @@ class Config:
     # === Количество устройств ===
     LIMIT_IP: int = int(os.getenv("LIMIT_IP", "5"))
 
+    # === Router API ===
+    ROUTER_API_URL: str = os.getenv("ROUTER_API_URL", "https://routerspixis.bot.nu:8443")
+    ROUTER_API_TOKEN: str = os.getenv("ROUTER_API_TOKEN", "")
+
 
 config = Config()

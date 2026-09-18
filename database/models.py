@@ -22,7 +22,7 @@ class Client(Base):
     phone = Column(String(20))
     source = Column(String(100))
     referrer_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
-    status = Column(String(20), default="active")  # active, banned
+    status = Column(String(20), default="active")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     subscriptions = relationship("Subscription", back_populates="client", lazy="selectin")
@@ -42,10 +42,9 @@ class Subscription(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     started_at = Column(Date, nullable=False, default=date.today)
     expires_at = Column(Date, nullable=False)
-    status = Column(String(20), default="active")  # active, expired, cancelled, banned, cleaned
+    status = Column(String(20), default="active")
     plan = Column(String(20), default="1month")
     is_trial = Column(Boolean, default=False)
-    # ✅ ИЗМЕНЕНИЕ: убран default=generate_uuid, добавлен nullable=True
     xray_uuid = Column(String(64), nullable=True)
     sub_link = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -60,7 +59,7 @@ class Payment(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     amount = Column(DECIMAL(10, 2), nullable=False)
     method = Column(String(20), default="sbp")
-    status = Column(String(20), default="pending")  # pending, confirmed, rejected
+    status = Column(String(20), default="pending")
     phone_last4 = Column(String(4))
     confirmed_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -122,10 +121,13 @@ class Router(Base):
     __tablename__ = "routers"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    router_uid = Column(String(64), unique=True, nullable=False)
+    router_uid = Column(String(64), unique=True, nullable=False)  # MAC-адрес
+    email = Column(String(255), unique=True, nullable=True)       # nx31-AABBCCDDEEFF
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     agent_version = Column(String(20))
+    firmware_version = Column(String(20))
     xray_key_id = Column(Integer)
+    last_ip = Column(String(45))
     last_heartbeat = Column(DateTime)
     status = Column(String(20), default="active")
     created_at = Column(DateTime, default=datetime.utcnow)

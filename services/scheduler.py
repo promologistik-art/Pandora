@@ -14,6 +14,7 @@ from database.models import Client, Subscription, Payment, EventLog, TrafficLog
 from services.xray_api import xray
 from services.client_service import get_active_subscription
 from services.cleanup import full_cleanup
+from services.router_service import sync_routers
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
@@ -383,24 +384,20 @@ async def daily_report(bot: Bot):
             select(func.count(Client.id))
             .where(func.date(Client.created_at) == yesterday)
         )
-        logger.info(f"Новых клиентов за вчера: {new_clients or 0}")
 
         total_clients = await session.scalar(select(func.count(Client.id)))
-        logger.info(f"Всего клиентов: {total_clients or 0}")
 
         active_clients = await session.scalar(
             select(func.count(func.distinct(Subscription.client_id)))
             .where(Subscription.status == "active")
             .where(Subscription.expires_at >= today)
         )
-        logger.info(f"Активных подписок: {active_clients or 0}")
 
         expired_yesterday = await session.scalar(
             select(func.count(Subscription.id))
             .where(Subscription.status == "expired")
             .where(Subscription.expires_at == yesterday)
         )
-        logger.info(f"Истекло за вчера: {expired_yesterday or 0}")
 
         # ========================================
         # 2. ФИНАНСЫ
@@ -410,7 +407,6 @@ async def daily_report(bot: Bot):
             .where(Payment.status == "confirmed")
             .where(func.date(Payment.confirmed_at) == yesterday)
         )
-        logger.info(f"Выручка за день: {payments_day or 0} руб.")
 
         month_start = today.replace(day=1)
         payments_month = await session.scalar(
@@ -418,7 +414,6 @@ async def daily_report(bot: Bot):
             .where(Payment.status == "confirmed")
             .where(Payment.confirmed_at >= month_start)
         )
-        logger.info(f"Выручка за месяц: {payments_month or 0} руб.")
 
         # ========================================
         # 3. ТРАФИК ЗА ВЧЕРА
@@ -433,7 +428,6 @@ async def daily_report(bot: Bot):
         traffic_data = traffic.one()
         upload_bytes = traffic_data.upload or 0
         download_bytes = traffic_data.download or 0
-        logger.info(f"Трафик за вчера: upload={upload_bytes}, download={download_bytes}")
 
         # ========================================
         # 4. КЛИЕНТЫ, ИСТЕКАЮЩИЕ ЗАВТРА
@@ -445,7 +439,6 @@ async def daily_report(bot: Bot):
             .where(Subscription.expires_at == tomorrow)
         )
         expiring_list = expiring_tomorrow.all()
-        logger.info(f"Истекает завтра: {len(expiring_list)} клиентов")
 
     # ========================================
     # 5. ФОРМИРУЕМ ОТЧЁТ
@@ -584,6 +577,14 @@ async def start_scheduler(bot: Bot):
         IntervalTrigger(minutes=30),
         args=[bot],
         id="monitor_server",
+        replace_existing=True,
+    )
+
+    # Синхронизация роутеров — каждые 30 минут
+    scheduler.add_job(
+        sync_routers,
+        IntervalTrigger(minutes=30),
+        id="sync_routers",
         replace_existing=True,
     )
 

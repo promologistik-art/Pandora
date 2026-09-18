@@ -10,8 +10,36 @@ def admin_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="📊 Статистика", callback_data="admin:stats")
     builder.button(text="🖥 Сервер", callback_data="admin:server")
     builder.button(text="📊 Трафик (сегодня/вчера/месяц)", callback_data="admin:traffic_report")
+    builder.button(text="📡 Роутеры", callback_data="admin:routers")
     builder.button(text="📢 Рассылка", callback_data="admin:broadcast")
     builder.button(text="🧹 Очистка истекших", callback_data="admin:cleanup")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def routers_keyboard(routers: list) -> InlineKeyboardMarkup:
+    """Клавиатура со списком роутеров."""
+    builder = InlineKeyboardBuilder()
+    
+    for r in routers[:20]:  # максимум 20 роутеров на странице
+        status_emoji = "🟢" if r.get("is_online") else "⚫"
+        mac_short = r["mac"][-8:] if len(r["mac"]) > 8 else r["mac"]
+        builder.button(
+            text=f"{status_emoji} {mac_short}",
+            callback_data=f"admin:router:{r['mac']}"
+        )
+    
+    builder.button(text="🔄 Обновить", callback_data="admin:routers")
+    builder.button(text="🔙 Назад", callback_data="admin:back")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def router_detail_keyboard(mac: str) -> InlineKeyboardMarkup:
+    """Клавиатура для деталей роутера."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 Обновить", callback_data=f"admin:router:{mac}")
+    builder.button(text="🔙 К списку", callback_data="admin:routers")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -79,7 +107,6 @@ def payment_confirm_keyboard(payment_id: int) -> InlineKeyboardMarkup:
     """Клавиатура для подтверждения платежа с выбором суммы."""
     builder = InlineKeyboardBuilder()
     
-    # Кнопки с суммами тарифов
     for key, tariff in config.TARIFFS.items():
         builder.button(
             text=f"{tariff['price']} руб. ({tariff['name']})",

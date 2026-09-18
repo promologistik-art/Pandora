@@ -6,24 +6,27 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from sqlalchemy import select, func, text
 
 from config import config
 from database.engine import async_session
-from database.models import Client, Subscription, Payment, EventLog, Referral, TrafficLog
+from database.models import Client, Subscription, Payment, EventLog, Referral, TrafficLog, Router
 from services.client_service import (
     get_or_create_client, get_active_subscription,
     is_admin, get_free_sub_link
 )
 from services.xray_api import xray
 from services.cleanup import full_cleanup
+from services.router_service import sync_routers, get_all_routers, is_router_online
 from keyboards.admin_kb import (
     admin_keyboard, user_profile_keyboard,
     subscription_list_keyboard, confirm_keyboard,
     confirm_extend_keyboard, payment_confirm_keyboard,
     payment_confirm_final_keyboard, payment_reject_keyboard,
-    confirm_delete_user_keyboard
+    confirm_delete_user_keyboard,
+    routers_keyboard, router_detail_keyboard
 )
 
 logger = logging.getLogger(__name__)
@@ -890,7 +893,6 @@ async def extend_subscription_confirm(callback: types.CallbackQuery):
         f"✅ Подписка @{client.username or client.first_name} продлена до {sub.expires_at.strftime('%d.%m.%Y')}."
     )
     
-    # Уведомление клиента
     try:
         await callback.bot.send_message(
             client.telegram_id,
@@ -1566,6 +1568,131 @@ async def traffic_report(callback: types.CallbackQuery):
 
 
 # ========================
+# РОУТЕРЫ
+# ========================
+
+@router.callback_query(F.data == "admin:routers")
+async def show_routers(callback: types.CallbackQuery):
+    """Показать список роутеров."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+    
+    await callback.message.edit_text("⏳ Синхронизация роутеров...")
+    
+    # Синхронизируем с API
+    await sync_routers()
+    
+    # Получаем роутеры из БД
+    routers_db = await get_all_routers()
+    
+    if not routers_db:
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🔄 Обновить", callback_data="admin:routers")
+        builder.button(text="🔙 Назад", callback_data="admin:back")
+        builder.adjust(1)
+        
+        await callback.message.edit_text(
+            "📡 <b>Роутеры</b>\n\n"
+            "📭 Пока нет зарегистрированных роутеров.\n\n"
+            "<i>Роутеры появятся здесь после регистрации через API.</i>",
+            reply_markup=builder.as_markup()
+        )
+        await callback.answer()
+        return
+    
+    # Формируем список
+    text = "<b>📡 Роутеры</b>\n\n"
+    
+    online_count = 0
+    routers_list = []
+    for r in routers_db:
+        is_online = is_router_online(r)
+        if is_online:
+            online_count += 1
+        
+        status_emoji = "🟢" if is_online else "⚫"
+        mac = r.router_uid
+        email = r.email or "—"
+        last_hb = r.last_heartbeat.strftime('%d.%m %H:%M') if r.last_heartbeat else "никогда"
+        
+        text += (
+            f"{status_emoji} <b>{mac}</b>\n"
+            f"   📧 {email}\n"
+            f"   🕐 {last_hb}\n\n"
+        )
+        
+        routers_list.append({"mac": mac, "is_online": is_online})
+    
+    text += f"<i>Всего: {len(routers_db)} | Онлайн: {online_count}</i>"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=routers_keyboard(routers_list)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:router:"))
+async def show_router_detail(callback: types.CallbackQuery):
+    """Показать детали роутера."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+    
+    parts = callback.data.split(":")
+    if len(parts) < 3:
+        await callback.answer("Ошибка формата")
+        return
+    
+    mac = ":".join(parts[2:])
+    
+    async with async_session() as session:
+        result = await session.execute(
+            select(Router).where(Router.router_uid == mac)
+        )
+        router_obj = result.scalar_one_or_none()
+    
+    if not router_obj:
+        await callback.answer("Роутер не найден", show_alert=True)
+        return
+    
+    is_online = is_router_online(router_obj)
+    status_emoji = "🟢" if is_online else "⚫"
+    
+    text = (
+        f"<b>📡 Роутер {mac}</b>\n\n"
+        f"<b>Статус:</b> {status_emoji} {'онлайн' if is_online else 'оффлайн'}\n"
+        f"<b>Email:</b> {router_obj.email or '—'}\n"
+        f"<b>Прошивка:</b> {router_obj.firmware_version or '—'}\n"
+        f"<b>Последний IP:</b> {router_obj.last_ip or '—'}\n"
+        f"<b>Последний heartbeat:</b> {router_obj.last_heartbeat.strftime('%d.%m.%Y %H:%M') if router_obj.last_heartbeat else 'никогда'}\n"
+        f"<b>Создан:</b> {router_obj.created_at.strftime('%d.%m.%Y %H:%M') if router_obj.created_at else '—'}\n"
+    )
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=router_detail_keyboard(mac)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:back")
+async def admin_back(callback: types.CallbackQuery):
+    """Возврат в главное меню админки."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        "<b>⚙️ Админ-панель</b>\n\n"
+        "Выберите действие:",
+        reply_markup=admin_keyboard()
+    )
+    await callback.answer()
+
+
+# ========================
 # РАССЫЛКА
 # ========================
 
@@ -1831,9 +1958,6 @@ async def payment_confirm_final(callback: types.CallbackQuery):
         session.add(event)
         await session.commit()
 
-    # ========================================
-    # ОТПРАВКА СООБЩЕНИЯ КЛИЕНТУ
-    # ========================================
     try:
         link = sub.sub_link or await xray.get_client_link(f"client_{client.id}") or "не назначена"
         
