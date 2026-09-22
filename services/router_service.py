@@ -1,6 +1,6 @@
 import httpx
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import select
 
 from config import config
@@ -8,6 +8,13 @@ from database.engine import async_session
 from database.models import Router
 
 logger = logging.getLogger(__name__)
+
+
+def utc_to_msk(dt: datetime | None) -> datetime | None:
+    """Конвертирует UTC → МСК (UTC+3)."""
+    if dt is None:
+        return None
+    return dt + timedelta(hours=3)
 
 
 async def fetch_routers_from_api() -> list | None:
@@ -154,3 +161,30 @@ def is_router_online(router: Router) -> bool:
     
     delta = (datetime.utcnow() - router.last_heartbeat).total_seconds()
     return delta < 600  # 10 минут
+
+
+def get_router_last_heartbeat_msk(router: Router) -> str:
+    """Получить последний heartbeat в МСК (формат: ДД.ММ ЧЧ:ММ)."""
+    if not router.last_heartbeat:
+        return "никогда"
+    
+    msk = utc_to_msk(router.last_heartbeat)
+    return msk.strftime('%d.%m %H:%M')
+
+
+def get_router_created_msk(router: Router) -> str:
+    """Получить дату создания в МСК (формат: ДД.ММ.ГГГГ ЧЧ:ММ)."""
+    if not router.created_at:
+        return "—"
+    
+    msk = utc_to_msk(router.created_at)
+    return msk.strftime('%d.%m.%Y %H:%M')
+
+
+def get_router_last_heartbeat_full_msk(router: Router) -> str:
+    """Получить последний heartbeat в МСК (формат: ДД.ММ.ГГГГ ЧЧ:ММ)."""
+    if not router.last_heartbeat:
+        return "никогда"
+    
+    msk = utc_to_msk(router.last_heartbeat)
+    return msk.strftime('%d.%m.%Y %H:%M')
