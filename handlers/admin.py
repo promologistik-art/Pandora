@@ -24,7 +24,10 @@ from services.xray_api import xray
 from services.cleanup import full_cleanup
 from services.router_service import (
     sync_routers, get_all_routers, is_router_online,
-    delete_router_from_db
+    delete_router_from_db,
+    get_router_last_heartbeat_msk,
+    get_router_last_heartbeat_full_msk,
+    get_router_created_msk
 )
 from keyboards.admin_kb import (
     admin_keyboard, user_profile_keyboard,
@@ -1622,12 +1625,12 @@ async def show_routers(callback: types.CallbackQuery):
         status_emoji = "🟢" if is_online else "⚫"
         mac = r.router_uid
         email = r.email or "—"
-        last_hb = r.last_heartbeat.strftime('%d.%m %H:%M') if r.last_heartbeat else "никогда"
+        last_hb = get_router_last_heartbeat_msk(r)
         
         text += (
             f"{status_emoji} <b>{mac}</b>\n"
             f"   📧 {email}\n"
-            f"   🕐 {last_hb}\n\n"
+            f"   🕐 {last_hb} МСК\n\n"
         )
         
         routers_list.append({"mac": mac, "is_online": is_online})
@@ -1675,8 +1678,8 @@ async def show_router_detail(callback: types.CallbackQuery):
             f"<b>Email:</b> {router_obj.email or '—'}\n"
             f"<b>Прошивка:</b> {router_obj.firmware_version or '—'}\n"
             f"<b>Последний IP:</b> {router_obj.last_ip or '—'}\n"
-            f"<b>Последний heartbeat:</b> {router_obj.last_heartbeat.strftime('%d.%m.%Y %H:%M') if router_obj.last_heartbeat else 'никогда'}\n"
-            f"<b>Создан:</b> {router_obj.created_at.strftime('%d.%m.%Y %H:%M') if router_obj.created_at else '—'}\n"
+            f"<b>Последний heartbeat:</b> {get_router_last_heartbeat_full_msk(router_obj)} МСК\n"
+            f"<b>Создан:</b> {get_router_created_msk(router_obj)} МСК\n"
         )
         
         await callback.message.edit_text(
