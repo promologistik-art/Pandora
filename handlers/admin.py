@@ -27,7 +27,11 @@ from services.router_service import (
     delete_router_from_db,
     get_router_last_heartbeat_msk,
     get_router_last_heartbeat_full_msk,
-    get_router_created_msk
+    get_router_created_msk,
+    send_router_command,
+    get_router_logs,
+    get_router_podkop_status,
+    delete_router_from_api
 )
 from keyboards.admin_kb import (
     admin_keyboard, user_profile_keyboard,
@@ -1591,10 +1595,7 @@ async def show_routers(callback: types.CallbackQuery):
     
     await callback.message.edit_text("⏳ Синхронизация роутеров...")
     
-    # Синхронизируем с API
     sync_result = await sync_routers()
-    
-    # Получаем роутеры из БД
     routers_db = await get_all_routers()
     
     if not routers_db:
@@ -1612,7 +1613,6 @@ async def show_routers(callback: types.CallbackQuery):
         await callback.answer()
         return
     
-    # Формируем список
     text = "<b>📡 Роутеры</b>\n\n"
     
     online_count = 0
@@ -1651,7 +1651,6 @@ async def show_router_detail(callback: types.CallbackQuery):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
     
-    # Формат: admin:router:MAC_SAFE или admin:router:команда:MAC_SAFE
     parts = callback.data.split(":")
     
     if len(parts) == 3:
@@ -1695,41 +1694,116 @@ async def show_router_detail(callback: types.CallbackQuery):
         mac_safe = parts[3]
         mac = mac_from_safe(mac_safe)
         
+        # === ПЕРЕЗАГРУЗИТЬ ===
         if command == "reboot":
-            await callback.answer("🔌 Функция в разработке", show_alert=True)
+            await callback.answer("⏳ Отправляем команду...")
+            
+            result = await send_router_command(mac, "reboot")
+            
+            if result and result.get("success"):
+                await callback.message.edit_text(
+                    f"<b>📡 Роутер {mac}</b>\n\n"
+                    f"✅ Команда перезагрузки отправлена.\n"
+                    f"Роутер перезагрузится через несколько секунд.",
+                    reply_markup=router_detail_keyboard(mac)
+                )
+            else:
+                await callback.message.edit_text(
+                    f"<b>📡 Роутер {mac}</b>\n\n"
+                    f"❌ Не удалось отправить команду перезагрузки.\n"
+                    f"Возможно, роутер оффлайн.",
+                    reply_markup=router_detail_keyboard(mac)
+                )
+            return
         
+        # === ОБНОВИТЬ ССЫЛКИ ===
         elif command == "update":
-            await callback.answer("🔄 Функция в разработке", show_alert=True)
+            await callback.answer("⏳ Отправляем команду...")
+            
+            result = await send_router_command(mac, "update")
+            
+            if result and result.get("success"):
+                output = result.get("output", "")[:500]
+                await callback.message.edit_text(
+                    f"<b>📡 Роутер {mac}</b>\n\n"
+                    f"✅ Обновление ссылок запущено.\n\n"
+                    f"<b>Вывод:</b>\n"
+                    f"<code>{output}</code>",
+                    reply_markup=router_detail_keyboard(mac)
+                )
+            else:
+                await callback.message.edit_text(
+                    f"<b>📡 Роутер {mac}</b>\n\n"
+                    f"❌ Не удалось запустить обновление.\n"
+                    f"Возможно, роутер оффлайн.",
+                    reply_markup=router_detail_keyboard(mac)
+                )
+            return
         
+        # === ЛОГИ ===
         elif command == "logs":
-            await callback.answer("📜 Функция в разработке", show_alert=True)
+            await callback.answer("⏳ Загружаем логи...")
+            
+            logs = await get_router_logs(mac, lines=30)
+            
+            if logs:
+                # Ограничиваем длину (Telegram — 4096 символов)
+                if len(logs) > 3500:
+                    logs = "..." + logs[-3500:]
+                
+                await callback.message.edit_text(
+                    f"<b>📜 Логи роутера {mac}</b>\n\n"
+                    f"<code>{logs}</code>",
+                    reply_markup=router_detail_keyboard(mac)
+                )
+            else:
+                await callback.message.edit_text(
+                    f"<b>📡 Роутер {mac}</b>\n\n"
+                    f"❌ Не удалось получить логи.\n"
+                    f"Возможно, роутер оффлайн.",
+                    reply_markup=router_detail_keyboard(mac)
+                )
+            return
         
+        # === УДАЛИТЬ (запрос подтверждения) ===
         elif command == "delete":
             await callback.message.edit_text(
                 f"⚠️ <b>Удалить роутер {mac}?</b>\n\n"
-                f"Роутер будет удалён из базы данных бота.\n"
-                f"Если он есть в API — останется там.\n\n"
+                f"Роутер будет удалён из базы данных бота и API.\n\n"
                 f"<b>Внимание:</b> действие необратимо!",
                 reply_markup=confirm_delete_router_keyboard(mac)
             )
             await callback.answer()
+            return
         
+        # === УДАЛИТЬ (подтверждение) ===
         elif command == "delete_confirm":
-            success = await delete_router_from_db(mac)
+            await callback.answer("⏳ Удаляем...")
             
-            if success:
-                await callback.message.edit_text(
-                    f"✅ Роутер {mac} удалён из базы данных бота."
-                )
+            # Удаляем из API
+            api_success = await delete_router_from_api(mac)
+            
+            # Удаляем из БД бота
+            db_success = await delete_router_from_db(mac)
+            
+            if db_success:
+                if api_success:
+                    message = f"✅ Роутер {mac} удалён из БД бота и API."
+                else:
+                    message = f"✅ Роутер {mac} удалён из БД бота.\n⚠️ Не удалось удалить из API (возможно, уже удалён)."
             else:
-                await callback.message.edit_text(
-                    f"❌ Не удалось удалить роутер {mac}."
-                )
-            await callback.answer()
+                message = f"❌ Не удалось удалить роутер {mac} из БД бота."
+            
+            builder = InlineKeyboardBuilder()
+            builder.button(text="🔙 К списку роутеров", callback_data="admin:routers")
+            builder.adjust(1)
+            
+            await callback.message.edit_text(message, reply_markup=builder.as_markup())
+            return
         
         else:
             await callback.answer("Неизвестная команда", show_alert=True)
-        return
+            return
     
     await callback.answer("Ошибка формата данных", show_alert=True)
 

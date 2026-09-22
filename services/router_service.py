@@ -54,7 +54,6 @@ async def sync_routers() -> dict:
     updated = 0
     deleted = 0
     
-    # Собираем MAC-адреса из API
     api_macs = set()
     for router_data in routers:
         mac = router_data.get("mac")
@@ -62,7 +61,6 @@ async def sync_routers() -> dict:
             api_macs.add(mac)
     
     async with async_session() as session:
-        # 1. Обновляем или добавляем роутеры из API
         for router_data in routers:
             mac = router_data.get("mac")
             email = router_data.get("email")
@@ -103,7 +101,6 @@ async def sync_routers() -> dict:
                 session.add(router)
                 added += 1
         
-        # 2. Удаляем роутеры из БД бота, которых нет в API
         result = await session.execute(select(Router))
         db_routers = result.scalars().all()
         
@@ -188,3 +185,75 @@ def get_router_last_heartbeat_full_msk(router: Router) -> str:
     
     msk = utc_to_msk(router.last_heartbeat)
     return msk.strftime('%d.%m.%Y %H:%M')
+
+
+# ========================
+# КОМАНДЫ УПРАВЛЕНИЯ
+# ========================
+
+async def send_router_command(mac: str, command: str) -> dict | None:
+    """Отправить команду роутеру через API."""
+    url = f"{config.ROUTER_API_URL}/api/router/command"
+    headers = {
+        "Authorization": f"Bearer {config.ROUTER_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    data = {"mac": mac, "command": command}
+    
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=90.0) as client:
+            resp = await client.post(url, headers=headers, json=data)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        logger.error(f"Ошибка отправки команды {command} на {mac}: {e}")
+        return None
+
+
+async def get_router_logs(mac: str, lines: int = 50) -> str | None:
+    """Получить логи роутера."""
+    url = f"{config.ROUTER_API_URL}/api/router/logs/{mac}?lines={lines}"
+    headers = {"Authorization": f"Bearer {config.ROUTER_API_TOKEN}"}
+    
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("success"):
+                return data.get("logs", "")
+            return None
+    except Exception as e:
+        logger.error(f"Ошибка получения логов {mac}: {e}")
+        return None
+
+
+async def get_router_podkop_status(mac: str) -> dict | None:
+    """Получить статус Podkop на роутере."""
+    url = f"{config.ROUTER_API_URL}/api/router/podkop-status/{mac}"
+    headers = {"Authorization": f"Bearer {config.ROUTER_API_TOKEN}"}
+    
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        logger.error(f"Ошибка получения статуса Podkop {mac}: {e}")
+        return None
+
+
+async def delete_router_from_api(mac: str) -> bool:
+    """Удалить роутер из API."""
+    url = f"{config.ROUTER_API_URL}/api/router/delete/{mac}"
+    headers = {"Authorization": f"Bearer {config.ROUTER_API_TOKEN}"}
+    
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+            resp = await client.delete(url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("success", False)
+    except Exception as e:
+        logger.error(f"Ошибка удаления роутера {mac}: {e}")
+        return False
