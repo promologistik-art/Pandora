@@ -10,7 +10,10 @@ from sqlalchemy import select, func, text
 
 from config import config
 from database.engine import async_session
-from database.models import Client, Subscription, Payment, EventLog, TrafficLog
+from database.models import (
+    Client, Subscription, Payment, EventLog, TrafficLog,
+    Router as RouterModel
+)
 from services.xray_api import xray
 from services.client_service import get_active_subscription
 from services.cleanup import full_cleanup
@@ -21,7 +24,7 @@ scheduler = AsyncIOScheduler()
 
 
 # ============================================================
-# НОВАЯ ЗАДАЧА: ОЧИСТКА ORPHAN-КЛИЕНТОВ
+# ОЧИСТКА ORPHAN-КЛИЕНТОВ
 # ============================================================
 
 async def cleanup_orphan_clients():
@@ -50,7 +53,7 @@ async def cleanup_orphan_clients():
 
 
 # ============================================================
-# Задача 1: Сбор трафика за вчерашний день
+# СБОР ТРАФИКА ЗА ВЧЕРАШНИЙ ДЕНЬ
 # ============================================================
 
 async def collect_traffic_with_retry(max_retries: int = 3, delay: int = 10):
@@ -134,16 +137,14 @@ async def collect_traffic():
 
 
 # ============================================================
-# Задача 2: Напоминания клиентам об истечении подписки
+# НАПОМИНАНИЯ ОБ ИСТЕЧЕНИИ ПОДПИСКИ
 # ============================================================
 
 async def check_expiring_subscriptions(bot: Bot):
     """Проверяет истекающие подписки и отправляет напоминания."""
     today = date.today()
     async with async_session() as session:
-        # ========================================
-        # 1. ПРОВЕРКА ЗА 7 ДНЕЙ (только платные подписки)
-        # ========================================
+        # 1. ЗА 7 ДНЕЙ
         expires_7d = today + timedelta(days=7)
         result = await session.execute(
             select(Subscription)
@@ -168,9 +169,7 @@ async def check_expiring_subscriptions(bot: Bot):
                 except Exception as e:
                     logger.warning(f"Не удалось отправить напоминание (7 дней) клиенту {client.id}: {e}")
 
-        # ========================================
-        # 2. ПРОВЕРКА ЗА 3 ДНЯ (только платные подписки)
-        # ========================================
+        # 2. ЗА 3 ДНЯ
         expires_3d = today + timedelta(days=3)
         result = await session.execute(
             select(Subscription)
@@ -195,9 +194,7 @@ async def check_expiring_subscriptions(bot: Bot):
                 except Exception as e:
                     logger.warning(f"Не удалось отправить напоминание (3 дня) клиенту {client.id}: {e}")
 
-        # ========================================
-        # 3. ПРОВЕРКА ЗА 2 ДНЯ (только платные подписки)
-        # ========================================
+        # 3. ЗА 2 ДНЯ
         expires_2d = today + timedelta(days=2)
         result = await session.execute(
             select(Subscription)
@@ -222,9 +219,7 @@ async def check_expiring_subscriptions(bot: Bot):
                 except Exception as e:
                     logger.warning(f"Не удалось отправить напоминание (2 дня) клиенту {client.id}: {e}")
 
-        # ========================================
-        # 4. ПРОВЕРКА ЗА 1 ДЕНЬ (триалы и платные подписки)
-        # ========================================
+        # 4. ЗА 1 ДЕНЬ
         expires_1d = today + timedelta(days=1)
         result = await session.execute(
             select(Subscription)
@@ -259,9 +254,7 @@ async def check_expiring_subscriptions(bot: Bot):
                     except Exception as e:
                         logger.warning(f"Не удалось отправить напоминание (1 день) клиенту {client.id}: {e}")
 
-        # ========================================
-        # 5. ПРОВЕРКА ЗА 12 ЧАСОВ (триалы и платные подписки)
-        # ========================================
+        # 5. ЗА 12 ЧАСОВ
         result = await session.execute(
             select(Subscription)
             .where(Subscription.status == "active")
@@ -300,9 +293,7 @@ async def check_expiring_subscriptions(bot: Bot):
                     except Exception as e:
                         logger.warning(f"Не удалось отправить напоминание (12ч) клиенту {client.id}: {e}")
 
-        # ========================================
-        # 6. ПОДПИСКИ, ИСТЕКАЮЩИЕ СЕГОДНЯ (деактивация в 23:59)
-        # ========================================
+        # 6. ДЕАКТИВАЦИЯ ИСТЕКШИХ
         result = await session.execute(
             select(Subscription)
             .where(Subscription.status == "active")
@@ -353,7 +344,7 @@ async def check_expiring_subscriptions(bot: Bot):
 
 
 # ============================================================
-# Задача 3: Ежедневная сводка админу
+# ЕЖЕДНЕВНАЯ СВОДКА АДМИНУ
 # ============================================================
 
 def format_bytes(bytes_value: int) -> str:
@@ -377,37 +368,29 @@ async def daily_report(bot: Bot):
     tomorrow = today + timedelta(days=1)
 
     async with async_session() as session:
-        # ========================================
-        # 1. КЛИЕНТЫ
-        # ========================================
+        # Клиенты
         new_clients = await session.scalar(
             select(func.count(Client.id))
             .where(func.date(Client.created_at) == yesterday)
         )
-
         total_clients = await session.scalar(select(func.count(Client.id)))
-
         active_clients = await session.scalar(
             select(func.count(func.distinct(Subscription.client_id)))
             .where(Subscription.status == "active")
             .where(Subscription.expires_at >= today)
         )
-
         expired_yesterday = await session.scalar(
             select(func.count(Subscription.id))
             .where(Subscription.status == "expired")
             .where(Subscription.expires_at == yesterday)
         )
 
-        # ========================================
-        # 2. ФИНАНСЫ
-        # ========================================
+        # Финансы
         payments_day = await session.scalar(
             select(func.sum(Payment.amount))
             .where(Payment.status == "confirmed")
             .where(func.date(Payment.confirmed_at) == yesterday)
         )
-
         month_start = today.replace(day=1)
         payments_month = await session.scalar(
             select(func.sum(Payment.amount))
@@ -415,9 +398,7 @@ async def daily_report(bot: Bot):
             .where(Payment.confirmed_at >= month_start)
         )
 
-        # ========================================
-        # 3. ТРАФИК ЗА ВЧЕРА
-        # ========================================
+        # Трафик
         traffic = await session.execute(
             select(
                 func.sum(TrafficLog.upload_bytes).label("upload"),
@@ -429,9 +410,7 @@ async def daily_report(bot: Bot):
         upload_bytes = traffic_data.upload or 0
         download_bytes = traffic_data.download or 0
 
-        # ========================================
-        # 4. КЛИЕНТЫ, ИСТЕКАЮЩИЕ ЗАВТРА
-        # ========================================
+        # Истекают завтра
         expiring_tomorrow = await session.execute(
             select(Subscription, Client.username, Client.first_name)
             .join(Client, Subscription.client_id == Client.id)
@@ -440,9 +419,6 @@ async def daily_report(bot: Bot):
         )
         expiring_list = expiring_tomorrow.all()
 
-    # ========================================
-    # 5. ФОРМИРУЕМ ОТЧЁТ
-    # ========================================
     yesterday_str = yesterday.strftime('%d.%m')
     
     report_lines = [
@@ -484,7 +460,7 @@ async def daily_report(bot: Bot):
 
 
 # ============================================================
-# Задача 4: Мониторинг сервера 3x-ui
+# МОНИТОРИНГ СЕРВЕРА 3X-UI
 # ============================================================
 
 async def monitor_server(bot: Bot):
@@ -514,10 +490,53 @@ async def monitor_server(bot: Bot):
 
 
 # ============================================================
-# Запуск планировщика
+# ПРОВЕРКА PODKOP НА РОУТЕРАХ
+# ============================================================
+
+async def check_routers_podkop(bot: Bot):
+    """Проверяет роутеры, у которых Podkop упал, и уведомляет админов."""
+    logger.info("🔍 Проверка статуса Podkop на роутерах...")
+    
+    async with async_session() as session:
+        result = await session.execute(
+            select(RouterModel).where(RouterModel.firmware_version == "PODKOP_FAILED")
+        )
+        routers = result.scalars().all()
+        
+        if not routers:
+            logger.info("✅ Все роутеры с работающим Podkop")
+            return
+        
+        for router in routers:
+            logger.warning(f"⚠️ Podkop не работает на роутере {router.router_uid}")
+            
+            for admin_id in config.ADMIN_IDS:
+                try:
+                    # Конвертируем время в МСК
+                    last_hb_msk = "никогда"
+                    if router.last_heartbeat:
+                        hb_msk = router.last_heartbeat + timedelta(hours=3)
+                        last_hb_msk = hb_msk.strftime('%d.%m.%Y %H:%M')
+                    
+                    await bot.send_message(
+                        admin_id,
+                        f"⚠️ <b>Podkop не работает на роутере</b>\n\n"
+                        f"MAC: <code>{router.router_uid}</code>\n"
+                        f"Email: {router.email or '—'}\n"
+                        f"Последний heartbeat: {last_hb_msk} МСК\n\n"
+                        f"<i>Роутер доступен, но VPN не работает.</i>\n"
+                        f"Проверьте: /admin → 📡 Роутеры"
+                    )
+                except Exception as e:
+                    logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
+
+
+# ============================================================
+# ЗАПУСК ПЛАНИРОВЩИКА
 # ============================================================
 
 async def start_scheduler(bot: Bot):
+    # 1. Очистка orphan-клиентов — каждый день в 3:30 ночи
     scheduler.add_job(
         cleanup_orphan_clients,
         CronTrigger(hour=3, minute=30),
@@ -525,6 +544,7 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
+    # 2. Очистка системы — 1-го числа каждого месяца в 2:30 ночи
     scheduler.add_job(
         full_cleanup,
         CronTrigger(day=1, hour=2, minute=30),
@@ -532,6 +552,7 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
+    # 3. Сбор трафика — в 3:00 (с повторными попытками)
     scheduler.add_job(
         collect_traffic_with_retry,
         CronTrigger(hour=3, minute=0),
@@ -540,6 +561,7 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
+    # 4. Напоминания об истечении — в 9:00 МСК (5:00 UTC)
     scheduler.add_job(
         check_expiring_subscriptions,
         CronTrigger(hour=5, minute=0),
@@ -548,6 +570,7 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
+    # 5. Напоминания за 12 часов — в 12:00 МСК (9:00 UTC)
     scheduler.add_job(
         check_expiring_subscriptions,
         CronTrigger(hour=9, minute=0),
@@ -556,6 +579,7 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
+    # 6. Деактивация истекших подписок — в 23:30 МСК (20:30 UTC)
     scheduler.add_job(
         check_expiring_subscriptions,
         CronTrigger(hour=20, minute=30),
@@ -564,14 +588,16 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
+    # 7. Ежедневная сводка — в 8:00 МСК (5:00 UTC)
     scheduler.add_job(
         daily_report,
-        CronTrigger(hour=4, minute=0),
+        CronTrigger(hour=5, minute=0),
         args=[bot],
         id="daily_report",
         replace_existing=True,
     )
 
+    # 8. Мониторинг сервера — каждые 30 минут
     scheduler.add_job(
         monitor_server,
         IntervalTrigger(minutes=30),
@@ -580,11 +606,20 @@ async def start_scheduler(bot: Bot):
         replace_existing=True,
     )
 
-    # Синхронизация роутеров — каждые 30 минут
+    # 9. Синхронизация роутеров — каждые 30 минут
     scheduler.add_job(
         sync_routers,
         IntervalTrigger(minutes=30),
         id="sync_routers",
+        replace_existing=True,
+    )
+
+    # 10. Проверка Podkop на роутерах — каждый час
+    scheduler.add_job(
+        check_routers_podkop,
+        CronTrigger(minute=0),
+        args=[bot],
+        id="check_routers_podkop",
         replace_existing=True,
     )
 
