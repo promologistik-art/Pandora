@@ -22,14 +22,18 @@ from services.client_service import (
 )
 from services.xray_api import xray
 from services.cleanup import full_cleanup
-from services.router_service import sync_routers, get_all_routers, is_router_online
+from services.router_service import (
+    sync_routers, get_all_routers, is_router_online,
+    delete_router_from_db
+)
 from keyboards.admin_kb import (
     admin_keyboard, user_profile_keyboard,
     subscription_list_keyboard, confirm_keyboard,
     confirm_extend_keyboard, payment_confirm_keyboard,
     payment_confirm_final_keyboard, payment_reject_keyboard,
     confirm_delete_user_keyboard,
-    routers_keyboard, router_detail_keyboard
+    routers_keyboard, router_detail_keyboard,
+    confirm_delete_router_keyboard
 )
 
 logger = logging.getLogger(__name__)
@@ -1583,8 +1587,10 @@ async def show_routers(callback: types.CallbackQuery):
     
     await callback.message.edit_text("⏳ Синхронизация роутеров...")
     
-    await sync_routers()
+    # Синхронизируем с API
+    sync_result = await sync_routers()
     
+    # Получаем роутеры из БД
     routers_db = await get_all_routers()
     
     if not routers_db:
@@ -1602,6 +1608,7 @@ async def show_routers(callback: types.CallbackQuery):
         await callback.answer()
         return
     
+    # Формируем список
     text = "<b>📡 Роутеры</b>\n\n"
     
     online_count = 0
@@ -1645,36 +1652,80 @@ async def show_router_detail(callback: types.CallbackQuery):
         await callback.answer("Ошибка формата")
         return
     
-    mac = ":".join(parts[2:])
+    mac = parts[2]
     
-    async with async_session() as session:
-        result = await session.execute(
-            select(RouterModel).where(RouterModel.router_uid == mac)
+    # Проверяем, это команда или просто открытие деталей
+    if len(parts) == 3:
+        # Просто открытие деталей
+        async with async_session() as session:
+            result = await session.execute(
+                select(RouterModel).where(RouterModel.router_uid == mac)
+            )
+            router_obj = result.scalar_one_or_none()
+        
+        if not router_obj:
+            await callback.answer("Роутер не найден", show_alert=True)
+            return
+        
+        is_online = is_router_online(router_obj)
+        status_emoji = "🟢" if is_online else "⚫"
+        
+        text = (
+            f"<b>📡 Роутер {mac}</b>\n\n"
+            f"<b>Статус:</b> {status_emoji} {'онлайн' if is_online else 'оффлайн'}\n"
+            f"<b>Email:</b> {router_obj.email or '—'}\n"
+            f"<b>Прошивка:</b> {router_obj.firmware_version or '—'}\n"
+            f"<b>Последний IP:</b> {router_obj.last_ip or '—'}\n"
+            f"<b>Последний heartbeat:</b> {router_obj.last_heartbeat.strftime('%d.%m.%Y %H:%M') if router_obj.last_heartbeat else 'никогда'}\n"
+            f"<b>Создан:</b> {router_obj.created_at.strftime('%d.%m.%Y %H:%M') if router_obj.created_at else '—'}\n"
         )
-        router_obj = result.scalar_one_or_none()
-    
-    if not router_obj:
-        await callback.answer("Роутер не найден", show_alert=True)
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=router_detail_keyboard(mac)
+        )
+        await callback.answer()
         return
     
-    is_online = is_router_online(router_obj)
-    status_emoji = "🟢" if is_online else "⚫"
+    # Это команда
+    command = parts[2]
     
-    text = (
-        f"<b>📡 Роутер {mac}</b>\n\n"
-        f"<b>Статус:</b> {status_emoji} {'онлайн' if is_online else 'оффлайн'}\n"
-        f"<b>Email:</b> {router_obj.email or '—'}\n"
-        f"<b>Прошивка:</b> {router_obj.firmware_version or '—'}\n"
-        f"<b>Последний IP:</b> {router_obj.last_ip or '—'}\n"
-        f"<b>Последний heartbeat:</b> {router_obj.last_heartbeat.strftime('%d.%m.%Y %H:%M') if router_obj.last_heartbeat else 'никогда'}\n"
-        f"<b>Создан:</b> {router_obj.created_at.strftime('%d.%m.%Y %H:%M') if router_obj.created_at else '—'}\n"
-    )
+    if command == "reboot":
+        # TODO: отправить команду перезагрузки через API
+        await callback.answer("🔌 Функция в разработке", show_alert=True)
     
-    await callback.message.edit_text(
-        text,
-        reply_markup=router_detail_keyboard(mac)
-    )
-    await callback.answer()
+    elif command == "update":
+        # TODO: отправить команду обновления через API
+        await callback.answer("🔄 Функция в разработке", show_alert=True)
+    
+    elif command == "logs":
+        # TODO: получить логи через API
+        await callback.answer("📜 Функция в разработке", show_alert=True)
+    
+    elif command == "delete":
+        # Показать подтверждение удаления
+        await callback.message.edit_text(
+            f"⚠️ <b>Удалить роутер {mac}?</b>\n\n"
+            f"Роутер будет удалён из базы данных бота.\n"
+            f"Если он есть в API — останется там.\n\n"
+            f"<b>Внимание:</b> действие необратимо!",
+            reply_markup=confirm_delete_router_keyboard(mac)
+        )
+        await callback.answer()
+    
+    elif command == "delete_confirm":
+        # Удалить роутер
+        success = await delete_router_from_db(mac)
+        
+        if success:
+            await callback.message.edit_text(
+                f"✅ Роутер {mac} удалён из базы данных бота."
+            )
+        else:
+            await callback.message.edit_text(
+                f"❌ Не удалось удалить роутер {mac}."
+            )
+        await callback.answer()
 
 
 @router.callback_query(F.data == "admin:back")

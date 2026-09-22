@@ -41,30 +41,36 @@ async def sync_routers() -> dict:
     routers = await fetch_routers_from_api()
     if routers is None:
         logger.error("❌ Не удалось получить список роутеров")
-        return {"success": False, "added": 0, "updated": 0}
+        return {"success": False, "added": 0, "updated": 0, "deleted": 0}
     
     added = 0
     updated = 0
+    deleted = 0
+    
+    # Собираем MAC-адреса из API
+    api_macs = set()
+    for router_data in routers:
+        mac = router_data.get("mac")
+        if mac:
+            api_macs.add(mac)
     
     async with async_session() as session:
+        # 1. Обновляем или добавляем роутеры из API
         for router_data in routers:
             mac = router_data.get("mac")
             email = router_data.get("email")
             last_heartbeat_str = router_data.get("last_heartbeat")
             firmware = router_data.get("firmware_version")
             last_ip = router_data.get("last_ip")
-            is_online = router_data.get("is_online", False)
             
             if not mac:
                 continue
             
-            # Ищем роутер в БД бота
             result = await session.execute(
                 select(Router).where(Router.router_uid == mac)
             )
             router = result.scalar_one_or_none()
             
-            # Парсим last_heartbeat
             last_heartbeat = None
             if last_heartbeat_str:
                 try:
@@ -73,14 +79,12 @@ async def sync_routers() -> dict:
                     pass
             
             if router:
-                # Обновляем
                 router.email = email
                 router.firmware_version = firmware
                 router.last_ip = last_ip
                 router.last_heartbeat = last_heartbeat
                 updated += 1
             else:
-                # Создаём
                 router = Router(
                     router_uid=mac,
                     email=email,
@@ -92,10 +96,20 @@ async def sync_routers() -> dict:
                 session.add(router)
                 added += 1
         
+        # 2. Удаляем роутеры из БД бота, которых нет в API
+        result = await session.execute(select(Router))
+        db_routers = result.scalars().all()
+        
+        for db_router in db_routers:
+            if db_router.router_uid not in api_macs:
+                logger.info(f"🗑️ Удаляем роутер {db_router.router_uid} (нет в API)")
+                await session.delete(db_router)
+                deleted += 1
+        
         await session.commit()
     
-    logger.info(f"✅ Синхронизация завершена: добавлено {added}, обновлено {updated}")
-    return {"success": True, "added": added, "updated": updated}
+    logger.info(f"✅ Синхронизация завершена: добавлено {added}, обновлено {updated}, удалено {deleted}")
+    return {"success": True, "added": added, "updated": updated, "deleted": deleted}
 
 
 async def get_router_by_mac(mac: str) -> Router | None:
@@ -114,6 +128,23 @@ async def get_all_routers() -> list:
             select(Router).order_by(Router.created_at.desc())
         )
         return result.scalars().all()
+
+
+async def delete_router_from_db(mac: str) -> bool:
+    """Удалить роутер из БД бота."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Router).where(Router.router_uid == mac)
+        )
+        router = result.scalar_one_or_none()
+        
+        if not router:
+            return False
+        
+        await session.delete(router)
+        await session.commit()
+        logger.info(f"🗑️ Роутер {mac} удалён из БД бота")
+        return True
 
 
 def is_router_online(router: Router) -> bool:

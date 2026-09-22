@@ -38,9 +38,21 @@ def routers_keyboard(routers: list) -> InlineKeyboardMarkup:
 def router_detail_keyboard(mac: str) -> InlineKeyboardMarkup:
     """Клавиатура для деталей роутера."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔄 Обновить", callback_data=f"admin:router:{mac}")
+    builder.button(text="🔌 Перезагрузить", callback_data=f"admin:router:reboot:{mac}")
+    builder.button(text="🔄 Обновить ссылки", callback_data=f"admin:router:update:{mac}")
+    builder.button(text="📜 Логи", callback_data=f"admin:router:logs:{mac}")
+    builder.button(text="🗑️ Удалить", callback_data=f"admin:router:delete:{mac}")
     builder.button(text="🔙 К списку", callback_data="admin:routers")
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def confirm_delete_router_keyboard(mac: str) -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения удаления роутера."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, удалить", callback_data=f"admin:router:delete_confirm:{mac}")
+    builder.button(text="❌ Отмена", callback_data=f"admin:router:{mac}")
+    builder.adjust(2)
     return builder.as_markup()
 
 
