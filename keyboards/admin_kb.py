@@ -3,6 +3,18 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import config
 
 
+def mac_to_safe(mac: str) -> str:
+    """30:07:5C:DD:49:71 → 30075CDD4971"""
+    return mac.replace(":", "")
+
+
+def mac_from_safe(mac_safe: str) -> str:
+    """30075CDD4971 → 30:07:5C:DD:49:71"""
+    if len(mac_safe) != 12:
+        return mac_safe
+    return ":".join([mac_safe[i:i+2] for i in range(0, len(mac_safe), 2)])
+
+
 def admin_keyboard() -> InlineKeyboardMarkup:
     """Админ-панель."""
     builder = InlineKeyboardBuilder()
@@ -23,10 +35,11 @@ def routers_keyboard(routers: list) -> InlineKeyboardMarkup:
     
     for r in routers[:20]:  # максимум 20 роутеров на странице
         status_emoji = "🟢" if r.get("is_online") else "⚫"
-        mac_short = r["mac"][-8:] if len(r["mac"]) > 8 else r["mac"]
+        mac_safe = mac_to_safe(r["mac"])
+        mac_short = mac_safe[-8:] if len(mac_safe) > 8 else mac_safe
         builder.button(
             text=f"{status_emoji} {mac_short}",
-            callback_data=f"admin:router:{r['mac']}"
+            callback_data=f"admin:router:{mac_safe}"
         )
     
     builder.button(text="🔄 Обновить", callback_data="admin:routers")
@@ -37,11 +50,12 @@ def routers_keyboard(routers: list) -> InlineKeyboardMarkup:
 
 def router_detail_keyboard(mac: str) -> InlineKeyboardMarkup:
     """Клавиатура для деталей роутера."""
+    mac_safe = mac_to_safe(mac)
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔌 Перезагрузить", callback_data=f"admin:router:reboot:{mac}")
-    builder.button(text="🔄 Обновить ссылки", callback_data=f"admin:router:update:{mac}")
-    builder.button(text="📜 Логи", callback_data=f"admin:router:logs:{mac}")
-    builder.button(text="🗑️ Удалить", callback_data=f"admin:router:delete:{mac}")
+    builder.button(text="🔌 Перезагрузить", callback_data=f"admin:router:reboot:{mac_safe}")
+    builder.button(text="🔄 Обновить ссылки", callback_data=f"admin:router:update:{mac_safe}")
+    builder.button(text="📜 Логи", callback_data=f"admin:router:logs:{mac_safe}")
+    builder.button(text="🗑️ Удалить", callback_data=f"admin:router:delete:{mac_safe}")
     builder.button(text="🔙 К списку", callback_data="admin:routers")
     builder.adjust(1)
     return builder.as_markup()
@@ -49,9 +63,10 @@ def router_detail_keyboard(mac: str) -> InlineKeyboardMarkup:
 
 def confirm_delete_router_keyboard(mac: str) -> InlineKeyboardMarkup:
     """Клавиатура подтверждения удаления роутера."""
+    mac_safe = mac_to_safe(mac)
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Да, удалить", callback_data=f"admin:router:delete_confirm:{mac}")
-    builder.button(text="❌ Отмена", callback_data=f"admin:router:{mac}")
+    builder.button(text="✅ Да, удалить", callback_data=f"admin:router:delete_confirm:{mac_safe}")
+    builder.button(text="❌ Отмена", callback_data=f"admin:router:{mac_safe}")
     builder.adjust(2)
     return builder.as_markup()
 

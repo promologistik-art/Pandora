@@ -33,7 +33,8 @@ from keyboards.admin_kb import (
     payment_confirm_final_keyboard, payment_reject_keyboard,
     confirm_delete_user_keyboard,
     routers_keyboard, router_detail_keyboard,
-    confirm_delete_router_keyboard
+    confirm_delete_router_keyboard,
+    mac_from_safe
 )
 
 logger = logging.getLogger(__name__)
@@ -1642,21 +1643,19 @@ async def show_routers(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin:router:"))
 async def show_router_detail(callback: types.CallbackQuery):
-    """Показать детали роутера."""
+    """Показать детали роутера или обработать команду."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
     
+    # Формат: admin:router:MAC_SAFE или admin:router:команда:MAC_SAFE
     parts = callback.data.split(":")
-    if len(parts) < 3:
-        await callback.answer("Ошибка формата")
-        return
     
-    mac = parts[2]
-    
-    # Проверяем, это команда или просто открытие деталей
     if len(parts) == 3:
-        # Просто открытие деталей
+        # Просто открытие деталей: admin:router:MAC_SAFE
+        mac_safe = parts[2]
+        mac = mac_from_safe(mac_safe)
+        
         async with async_session() as session:
             result = await session.execute(
                 select(RouterModel).where(RouterModel.router_uid == mac)
@@ -1664,7 +1663,7 @@ async def show_router_detail(callback: types.CallbackQuery):
             router_obj = result.scalar_one_or_none()
         
         if not router_obj:
-            await callback.answer("Роутер не найден", show_alert=True)
+            await callback.answer(f"Роутер {mac} не найден", show_alert=True)
             return
         
         is_online = is_router_online(router_obj)
@@ -1687,45 +1686,49 @@ async def show_router_detail(callback: types.CallbackQuery):
         await callback.answer()
         return
     
-    # Это команда
-    command = parts[2]
-    
-    if command == "reboot":
-        # TODO: отправить команду перезагрузки через API
-        await callback.answer("🔌 Функция в разработке", show_alert=True)
-    
-    elif command == "update":
-        # TODO: отправить команду обновления через API
-        await callback.answer("🔄 Функция в разработке", show_alert=True)
-    
-    elif command == "logs":
-        # TODO: получить логи через API
-        await callback.answer("📜 Функция в разработке", show_alert=True)
-    
-    elif command == "delete":
-        # Показать подтверждение удаления
-        await callback.message.edit_text(
-            f"⚠️ <b>Удалить роутер {mac}?</b>\n\n"
-            f"Роутер будет удалён из базы данных бота.\n"
-            f"Если он есть в API — останется там.\n\n"
-            f"<b>Внимание:</b> действие необратимо!",
-            reply_markup=confirm_delete_router_keyboard(mac)
-        )
-        await callback.answer()
-    
-    elif command == "delete_confirm":
-        # Удалить роутер
-        success = await delete_router_from_db(mac)
+    if len(parts) == 4:
+        # Команда: admin:router:команда:MAC_SAFE
+        command = parts[2]
+        mac_safe = parts[3]
+        mac = mac_from_safe(mac_safe)
         
-        if success:
+        if command == "reboot":
+            await callback.answer("🔌 Функция в разработке", show_alert=True)
+        
+        elif command == "update":
+            await callback.answer("🔄 Функция в разработке", show_alert=True)
+        
+        elif command == "logs":
+            await callback.answer("📜 Функция в разработке", show_alert=True)
+        
+        elif command == "delete":
             await callback.message.edit_text(
-                f"✅ Роутер {mac} удалён из базы данных бота."
+                f"⚠️ <b>Удалить роутер {mac}?</b>\n\n"
+                f"Роутер будет удалён из базы данных бота.\n"
+                f"Если он есть в API — останется там.\n\n"
+                f"<b>Внимание:</b> действие необратимо!",
+                reply_markup=confirm_delete_router_keyboard(mac)
             )
+            await callback.answer()
+        
+        elif command == "delete_confirm":
+            success = await delete_router_from_db(mac)
+            
+            if success:
+                await callback.message.edit_text(
+                    f"✅ Роутер {mac} удалён из базы данных бота."
+                )
+            else:
+                await callback.message.edit_text(
+                    f"❌ Не удалось удалить роутер {mac}."
+                )
+            await callback.answer()
+        
         else:
-            await callback.message.edit_text(
-                f"❌ Не удалось удалить роутер {mac}."
-            )
-        await callback.answer()
+            await callback.answer("Неизвестная команда", show_alert=True)
+        return
+    
+    await callback.answer("Ошибка формата данных", show_alert=True)
 
 
 @router.callback_query(F.data == "admin:back")
